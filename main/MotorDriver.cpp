@@ -19,9 +19,20 @@ MotorDriver::~MotorDriver() {
 
 esp_err_t MotorDriver::init() {
     ESP_LOGI(TAG, "Initializing L298N / L829 Motor Driver on ESP32-S3...");
-    ESP_LOGI(TAG, "Pins: IN1=%d, IN2=%d, ENA=%d | IN3=%d, IN4=%d, ENB=%d",
-             config.in1Pin, config.in2Pin, config.enaPin,
-             config.in3Pin, config.in4Pin, config.enbPin);
+
+    // Auto-switch to 4-wire Direct PWM mode if ENA or ENB are excluded
+    if (config.enaPin == GPIO_NUM_NC || config.enbPin == GPIO_NUM_NC) {
+        config.mode = MotorControlMode::PwmDirectPins;
+    }
+
+    if (config.mode == MotorControlMode::PwmDirectPins) {
+        ESP_LOGI(TAG, "Mode: 4-Wire Direct PWM (ENA/ENB excluded, factory jumpers on 5V) | IN1=%d, IN2=%d | IN3=%d, IN4=%d",
+                 config.in1Pin, config.in2Pin, config.in3Pin, config.in4Pin);
+    } else {
+        ESP_LOGI(TAG, "Mode: 6-Wire PWM Enable | IN1=%d, IN2=%d, ENA=%d | IN3=%d, IN4=%d, ENB=%d",
+                 config.in1Pin, config.in2Pin, config.enaPin,
+                 config.in3Pin, config.in4Pin, config.enbPin);
+    }
 
     maxPwmDuty = (1UL << config.pwmResolution) - 1;
 

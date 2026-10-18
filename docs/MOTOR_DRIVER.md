@@ -22,18 +22,18 @@ The **L298N** (commonly referenced or mistyped as **L829**) is a high-power dual
 
 ## 2. Wiring & Pinout Diagram
 
-The default pin configuration on the ESP32-S3 has been selected to prevent any conflicts with the ILI9341 SPI Display, XPT2046 Touch Controller, Octal SPI Flash/PSRAM, and onboard RGB LED.
+The default pin configuration on the ESP32-S3 uses **4-wire direct PWM control**, which **completely excludes the ENA and ENB pins** by keeping the factory 5V jumper caps in place on the L298N board. This saves 2 valuable GPIO pins on the ESP32-S3!
 
-### Pinout Mapping
+### 4-Wire Pinout Mapping (Default - ENA/ENB Excluded)
 
 | L298N / L829 Pin | ESP32-S3 GPIO | Function | Description |
 | :--- | :--- | :--- | :--- |
-| **ENA** | **GPIO 17** | Motor A Speed PWM | LEDC Low-Speed Channel 1 (Ultrasonic 20 kHz) |
-| **IN1** | **GPIO 15** | Motor A Direction 1 | Digital GPIO Output |
-| **IN2** | **GPIO 16** | Motor A Direction 2 | Digital GPIO Output |
-| **IN3** | **GPIO 18** | Motor B Direction 1 | Digital GPIO Output |
-| **IN4** | **GPIO 21** | Motor B Direction 2 | Digital GPIO Output |
-| **ENB** | **GPIO 38** | Motor B Speed PWM | LEDC Low-Speed Channel 2 (Ultrasonic 20 kHz) |
+| **ENA** | *None* | Keep 5V Jumper ON | Tied to +5V logic rail via onboard jumper cap |
+| **IN1** | **GPIO 15** | Motor A Direct PWM 1 | LEDC Low-Speed Channel 1 (Ultrasonic 20 kHz) |
+| **IN2** | **GPIO 16** | Motor A Direct PWM 2 | LEDC Low-Speed Channel 2 (Ultrasonic 20 kHz) |
+| **IN3** | **GPIO 18** | Motor B Direct PWM 1 | LEDC Low-Speed Channel 3 (Ultrasonic 20 kHz) |
+| **IN4** | **GPIO 17** | Motor B Direct PWM 2 | LEDC Low-Speed Channel 4 (Ultrasonic 20 kHz) |
+| **ENB** | *None* | Keep 5V Jumper ON | Tied to +5V logic rail via onboard jumper cap |
 | **GND** | **GND** | Common Ground | **Must be tied to ESP32 Ground** |
 | **+12V / $V_S$** | External Battery (+) | Motor Power | 7.4V (2S LiPo) or 11.1V (3S LiPo) |
 | **+5V** | 5V Regulator Output | Logic Power | Leave unconnected if ESP32 is powered via USB |
@@ -45,21 +45,23 @@ The default pin configuration on the ESP32-S3 has been selected to prevent any c
   [Motor A +]---| OUT1                  OUT3 |--[Motor B +]
   [Motor A -]---| OUT2                  OUT4 |--[Motor B -]
                 |                            |
-                | ENA  IN1  IN2  IN3  IN4 ENB|
-                +--+----+----+----+----+---+--+
-                   |    |    |    |    |   |
-                   |    |    |    |    |   +------> ESP32-S3 GPIO 38 (Right PWM)
-                   |    |    |    |    +---------> ESP32-S3 GPIO 21 (Right DIR 2)
-                   |    |    |    +--------------> ESP32-S3 GPIO 18 (Right DIR 1)
-                   |    |    +-------------------> ESP32-S3 GPIO 16 (Left DIR 2)
-                   |    +------------------------> ESP32-S3 GPIO 15 (Left DIR 1)
-                   +-----------------------------> ESP32-S3 GPIO 17 (Left PWM)
+                | [ENA] IN1  IN2  IN3  IN4 [ENB]
+                +---+----+----+----+----+---+
+                    |    |    |    |    |   |
+     [Jumper ON] <--+    |    |    |    |   +--> [Jumper ON]
+     (Tied to 5V)        |    |    |    |        (Tied to 5V)
+                         |    |    |    +------> ESP32-S3 GPIO 17 (Right PWM 2)
+                         |    |    +-----------> ESP32-S3 GPIO 18 (Right PWM 1)
+                         |    +----------------> ESP32-S3 GPIO 16 (Left PWM 2)
+                         +---------------------> ESP32-S3 GPIO 15 (Left PWM 1)
 
            Power Terminals:
            [ +12V ] ---> Battery Positive (+) [7.4V - 12V]
            [  GND ] ---> Common Ground with ESP32-S3 & Battery (-)
            [  +5V ] ---> (Optional 5V logic out if onboard regulator jumper is fitted)
 ```
+
+*(Note: If you prefer 6-wire control with external enable pins, you can set `enaPin` and `enbPin` to your desired pins in `MotorDriverConfig` and remove the jumper caps).*
 
 ---
 

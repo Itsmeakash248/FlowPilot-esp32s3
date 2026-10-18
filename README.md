@@ -71,16 +71,15 @@ The GPIO assignment is carefully mapped to avoid conflicts with Octal PSRAM/Flas
 | | LCD BL | **GPIO 7** | PWM Backlight | LEDC Channel 0 (20 kHz) |
 | **Touch** | Touch CS | **GPIO 5** | SPI Chip Select | Active LOW (1 MHz) |
 | | Touch INT | **GPIO 6** | Interrupt | Pen-down IRQ |
-| **Motor Driver** | **IN1** (Motor A Dir 1) | **GPIO 15** | GPIO Output | Left Motor Forward/Reverse |
-| **(L829 / L298N)** | **IN2** (Motor A Dir 2) | **GPIO 16** | GPIO Output | Left Motor Forward/Reverse |
-| | **ENA** (Motor A PWM) | **GPIO 17** | LEDC Channel 1 | Left Speed PWM (20 kHz) |
-| | **IN3** (Motor B Dir 1) | **GPIO 18** | GPIO Output | Right Motor Forward/Reverse |
-| | **IN4** (Motor B Dir 2) | **GPIO 21** | GPIO Output | Right Motor Forward/Reverse |
-| | **ENB** (Motor B PWM) | **GPIO 38** | LEDC Channel 2 | Right Speed PWM (20 kHz) |
+| **Motor Driver** | **IN1** (Motor A PWM 1) | **GPIO 15** | LEDC Channel 1 | Left Motor Direct PWM (20 kHz) |
+| **(L829 / L298N)** | **IN2** (Motor A PWM 2) | **GPIO 16** | LEDC Channel 2 | Left Motor Direct PWM (20 kHz) |
+| | **IN3** (Motor B PWM 1) | **GPIO 18** | LEDC Channel 3 | Right Motor Direct PWM (20 kHz) |
+| | **IN4** (Motor B PWM 2) | **GPIO 17** | LEDC Channel 4 | Right Motor Direct PWM (20 kHz) |
+| | **ENA / ENB** | *None* | Onboard 5V Jumpers | **Excluded** (Jumpers left ON 5V) |
 | **Onboard RGB** | WS2812 DIN | **GPIO 48** | RMT / SPI Strip | Onboard DevKit LED |
 
 > [!TIP]
-> For complete wiring schematics, power supply isolation rules, and jumper configurations, consult the **[Motor Driver Hardware Guide](docs/MOTOR_DRIVER.md)**.
+> **ENA and ENB pins are excluded by default.** By keeping the factory 5V jumper caps on the L298N board, speed and direction are controlled directly via 4 PWM lines on IN1–IN4 (GPIOs 15, 16, 17, 18), forming a convenient contiguous block on the dev board. For full wiring diagrams, see the **[Motor Driver Hardware Guide](docs/MOTOR_DRIVER.md)**.
 
 ---
 

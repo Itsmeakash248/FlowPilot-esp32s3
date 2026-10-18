@@ -172,10 +172,10 @@ extern "C" void app_main(void) {
         ESP_LOGW(TAG, "Onboard RGB LED initialization returned: %s", esp_err_to_name(ledErr));
     }
 
-    // 4. Initialize L298N / L829 Dual H-Bridge Motor Driver
+    // 4. Initialize L298N / L829 Dual H-Bridge Motor Driver (4-wire direct PWM, ENA/ENB excluded)
     esp_err_t motorErr = getMotorDriver().init();
     if (motorErr == ESP_OK) {
-        ESP_LOGI(TAG, "L298N / L829 Motor Driver initialized successfully (Left: IN1=15, IN2=16, ENA=17 | Right: IN3=18, IN4=21, ENB=38).");
+        ESP_LOGI(TAG, "L298N / L829 Motor Driver initialized (4-wire direct PWM: IN1=15, IN2=16 | IN3=18, IN4=17 | ENA/ENB excluded).");
     } else {
         ESP_LOGE(TAG, "Motor driver initialization returned: %s", esp_err_to_name(motorErr));
     }

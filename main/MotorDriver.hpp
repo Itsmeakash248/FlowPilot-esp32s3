@@ -29,17 +29,17 @@ enum class MotorControlMode {
  */
 struct MotorDriverConfig {
     // Motor A (Left Motor) Pins
-    gpio_num_t in1Pin = GPIO_NUM_15;       ///< Motor A Direction 1
-    gpio_num_t in2Pin = GPIO_NUM_16;       ///< Motor A Direction 2
-    gpio_num_t enaPin = GPIO_NUM_17;       ///< Motor A Speed Enable PWM (PwmEnablePins mode)
+    gpio_num_t in1Pin = GPIO_NUM_15;       ///< Motor A Control Pin 1 (Direct PWM in 4-wire mode)
+    gpio_num_t in2Pin = GPIO_NUM_16;       ///< Motor A Control Pin 2 (Direct PWM in 4-wire mode)
+    gpio_num_t enaPin = GPIO_NUM_NC;       ///< Optional Speed Enable PWM (set to GPIO_NUM_NC to exclude, keeping 5V jumper)
 
     // Motor B (Right Motor) Pins
-    gpio_num_t in3Pin = GPIO_NUM_18;       ///< Motor B Direction 1
-    gpio_num_t in4Pin = GPIO_NUM_21;       ///< Motor B Direction 2
-    gpio_num_t enbPin = GPIO_NUM_38;       ///< Motor B Speed Enable PWM (PwmEnablePins mode)
+    gpio_num_t in3Pin = GPIO_NUM_18;       ///< Motor B Control Pin 1 (Direct PWM in 4-wire mode)
+    gpio_num_t in4Pin = GPIO_NUM_17;       ///< Motor B Control Pin 2 (Direct PWM in 4-wire mode)
+    gpio_num_t enbPin = GPIO_NUM_NC;       ///< Optional Speed Enable PWM (set to GPIO_NUM_NC to exclude, keeping 5V jumper)
 
-    // Control Mode
-    MotorControlMode mode = MotorControlMode::PwmEnablePins;
+    // Control Mode: Defaults to 4-wire direct PWM (ENA/ENB excluded with 5V jumpers installed)
+    MotorControlMode mode = MotorControlMode::PwmDirectPins;
 
     // Motor Inversion Flags (accounts for physically mirrored mounting)
     bool invertLeft = false;               ///< Invert left motor polarity
@@ -48,10 +48,10 @@ struct MotorDriverConfig {
     // ESP32-S3 Hardware LEDC PWM Parameters
     ledc_timer_t ledcTimer = LEDC_TIMER_1;              ///< Timer 1 (Timer 0 reserved for LCD backlight)
     ledc_mode_t speedMode = LEDC_LOW_SPEED_MODE;        ///< Low speed mode supported on ESP32-S3
-    ledc_channel_t pwmChannelA = LEDC_CHANNEL_1;        ///< LEDC Channel for Motor A / ENA
-    ledc_channel_t pwmChannelB = LEDC_CHANNEL_2;        ///< LEDC Channel for Motor B / ENB
-    ledc_channel_t pwmChannelA2 = LEDC_CHANNEL_3;       ///< LEDC Channel for IN2 (PwmDirectPins mode)
-    ledc_channel_t pwmChannelB2 = LEDC_CHANNEL_4;       ///< LEDC Channel for IN4 (PwmDirectPins mode)
+    ledc_channel_t pwmChannelA = LEDC_CHANNEL_1;        ///< LEDC Channel for IN1 (or ENA)
+    ledc_channel_t pwmChannelA2 = LEDC_CHANNEL_2;       ///< LEDC Channel for IN2
+    ledc_channel_t pwmChannelB = LEDC_CHANNEL_3;        ///< LEDC Channel for IN3 (or ENB)
+    ledc_channel_t pwmChannelB2 = LEDC_CHANNEL_4;       ///< LEDC Channel for IN4
 
     uint32_t pwmFreqHz = 20000;                         ///< 20 kHz ultrasonic PWM (silent, eliminates acoustic motor whine)
     ledc_timer_bit_t pwmResolution = LEDC_TIMER_10_BIT; ///< 10-bit resolution (0 - 1023 duty steps)
