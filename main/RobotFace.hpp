@@ -46,6 +46,8 @@ public:
     // Emotion controls
     void setEmotion(RobotEmotion emotion, bool immediate = false);
     RobotEmotion getEmotion() const { return currentEmotion; }
+    const RobotTheme& getTheme() const { return currentTheme; }
+    float getBreathPhase() const { return breathPhase; }
     void nextEmotion();
 
     // User interaction
@@ -54,6 +56,7 @@ public:
     void triggerBlink();
     void triggerWink();
     void setLookAt(float normX, float normY); // -1.0f to 1.0f
+    void setWifiStatus(bool enabled, bool isAp, bool isConnected, int8_t rssi = 0, uint8_t clientCount = 0);
 
 private:
     LGFX& display;
@@ -123,6 +126,13 @@ private:
     float voicePhase;
     float voiceHeights[9];
     float blushIntensity, targetBlushIntensity;
+
+    // Wi-Fi HUD telemetry
+    bool wifiEnabled;
+    bool wifiIsAp;
+    bool wifiConnected;
+    int8_t wifiRssi;
+    uint8_t wifiClientCount;
 
     // Internal update methods
     void updateAutonomousAI(float dt);

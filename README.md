@@ -1,53 +1,205 @@
-| Supported Targets | ESP32 | ESP32-C2 | ESP32-C3 | ESP32-C5 | ESP32-C6 | ESP32-C61 | ESP32-H2 | ESP32-H21 | ESP32-H4 | ESP32-P4 | ESP32-S2 | ESP32-S3 | ESP32-S31 | Linux |
-| ----------------- | ----- | -------- | -------- | -------- | -------- | --------- | -------- | --------- | -------- | -------- | -------- | -------- | --------- | ----- |
+# FlowPilot ESP32-S3
 
-# Hello World Example
+<div align="center">
 
-Starts a FreeRTOS task to print "Hello World".
+**An Intelligent Companion Robot Firmware for the ESP32-S3**  
+Featuring a 60 FPS Interactive Emotional Display, Dual H-Bridge Motor Kinematics, SoftAP Wi-Fi Telemetry, and Synchronized RGB Lighting.
 
-(See the README.md file in the upper level 'examples' directory for more information about examples.)
+[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v6.1%20%7C%20v5.x-blue.svg)](https://docs.espressif.com/projects/esp-idf/)
+[![Target](https://img.shields.io/badge/Target-ESP32--S3-red.svg)](https://www.espressif.com/en/products/socs/esp32-s3)
+[![Display](https://img.shields.io/badge/Display-ILI9341%20%2B%20XPT2046-green.svg)](https://github.com/lovyan03/LovyanGFX)
+[![Motor Driver](https://img.shields.io/badge/Motor%20Driver-L829%20%2F%20L298N-orange.svg)](docs/MOTOR_DRIVER.md)
+[![License](https://img.shields.io/badge/License-MIT-lightgrey.svg)](LICENSE)
 
-## How to use example
+</div>
 
-Follow detailed instructions provided specifically for this example.
+---
 
-Select the instructions depending on Espressif chip installed on your development board:
+## 🌟 Highlights & Features
 
-- [ESP32 Getting Started Guide](https://docs.espressif.com/projects/esp-idf/en/stable/get-started/index.html)
-- [ESP32-S2 Getting Started Guide](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s2/get-started/index.html)
+### 🤖 1. Expressive 60 FPS Robot Face (`RobotFace`)
+- **Graphics Pipeline**: Accelerated by [LovyanGFX](https://github.com/lovyan03/LovyanGFX) with 16-bit double-buffered DMA rendering onto a 320x240 ILI9341 LCD.
+- **Procedural Kinematics**: Smooth organic eye saccades, procedural blinking, pupil dilation, and breathing rhythm.
+- **Emotion State Machine**: Supports fluid transitions between multiple emotions:
+  - `Neutral`, `Happy`, `Excited`, `Curious`, `Thinking`, `Sleepy`, `Wink`, `Angry`, and `Glitch`.
+- **Interactive Touch Tracking**: Integrated with the XPT2046 resistive touch controller:
+  - **Gaze Tracking**: Eyes follow the user's finger in real-time across the screen.
+  - **Tap Interaction**: Quick taps (<350ms) cycle between emotional states.
+- **HUD Telemetry Overlay**: On-screen indicators for Wi-Fi status, hotspot activity, client count, and battery/RSSI.
 
+### 🏎️ 2. L829 / L298N Dual H-Bridge Motor Driver (`MotorDriver`)
+- **Silent Ultrasonic PWM**: 20 kHz hardware PWM via the ESP32-S3 LEDC peripheral with 10-bit resolution (0–1023), completely eliminating high-pitched motor whine.
+- **Arcade Differential Drive Kinematics**:
+  - Longitudinal throttle and rotational steering mixing (`drive(throttle, steering)`).
+  - Proportional heading preservation to prevent spinout at high throttle.
+- **Brownout Protection & Slew Rate Limiting**: Continuous soft-start acceleration ramps prevent voltage dips and brownout resets when DC motors switch on under load.
+- **Deadzone Compensation**: Automatically overcomes static gearbox friction.
+- **Dual Operating Modes**:
+  - **3-Wire Mode**: ENA/ENB receive PWM, IN1–IN4 control direction.
+  - **2-Wire Mode**: Direct PWM on IN1–IN4 with factory ENA/ENB jumpers installed.
+- **Active Braking & Coasting**: Choose between short-circuit dynamic electrical braking and free-wheeling coast.
 
-## Example folder contents
+### 💡 3. Synchronized WS2812 Addressable RGB LED (`RgbLed`)
+- Controls the onboard WS2812 addressable RGB LED on **GPIO 48**.
+- **Emotion Sync Mode**: Synchronizes color palette and breathing frequency directly with the active face emotion and breath cycle.
+- **Standalone Modes**: Solid color, breathing/pulsing, continuous rainbow cycle, and emergency strobe.
 
-The project **hello_world** contains one source file in C language [hello_world_main.c](main/hello_world_main.c). The file is located in folder [main](main).
+### 📡 4. Wi-Fi Manager & Hotspot Subsystem (`WifiManager`)
+- **SoftAP Hotspot**: Broadcasts `FlowPilot-AP` (`192.168.4.1`) with client device tracking.
+- **Station Mode (STA)**: Connects to external Wi-Fi networks with auto-reconnection and exponential backoff.
+- **Concurrent Mode (AP+STA)**: Runs hotspot and station connections simultaneously.
+- **Live HUD Sync**: Real-time IP address, RSSI, and connected client counts pushed to the display.
 
-ESP-IDF projects are built using CMake. The project build configuration is contained in `CMakeLists.txt` files that provide set of directives and instructions describing the project's source files and targets (executable, library, or both).
+### ⚡ 5. Dual-Core Asynchronous Architecture
+- **Core 1**: Dedicated high-speed animation task (`robot_face_task`) delivering stable 60 FPS without frame drops.
+- **Core 0**: Wi-Fi network stacks (lwIP), RF calibration, and background OS tasks.
 
-Below is short explanation of remaining files in the project folder.
+---
+
+## 📌 Master Hardware Pinout
+
+The GPIO assignment is carefully mapped to avoid conflicts with Octal PSRAM/Flash (`GPIO 26–32`), USB JTAG (`GPIO 19, 20`), and UART0 (`GPIO 43, 44`).
+
+| Function | Pin Name | ESP32-S3 GPIO | Bus / Interface | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| **Display** | LCD MOSI | **GPIO 11** | SPI2 (FSPI) | Shared SPI Bus |
+| | LCD MISO | **GPIO 13** | SPI2 (FSPI) | Shared SPI Bus |
+| | LCD SCLK | **GPIO 12** | SPI2 (FSPI) | Shared SPI Bus (40 MHz) |
+| | LCD CS | **GPIO 10** | SPI Chip Select | Active LOW |
+| | LCD DC | **GPIO 9** | Data / Command | |
+| | LCD RST | **GPIO 14** | Reset | Active LOW |
+| | LCD BL | **GPIO 7** | PWM Backlight | LEDC Channel 0 (20 kHz) |
+| **Touch** | Touch CS | **GPIO 5** | SPI Chip Select | Active LOW (1 MHz) |
+| | Touch INT | **GPIO 6** | Interrupt | Pen-down IRQ |
+| **Motor Driver** | **IN1** (Motor A Dir 1) | **GPIO 15** | GPIO Output | Left Motor Forward/Reverse |
+| **(L829 / L298N)** | **IN2** (Motor A Dir 2) | **GPIO 16** | GPIO Output | Left Motor Forward/Reverse |
+| | **ENA** (Motor A PWM) | **GPIO 17** | LEDC Channel 1 | Left Speed PWM (20 kHz) |
+| | **IN3** (Motor B Dir 1) | **GPIO 18** | GPIO Output | Right Motor Forward/Reverse |
+| | **IN4** (Motor B Dir 2) | **GPIO 21** | GPIO Output | Right Motor Forward/Reverse |
+| | **ENB** (Motor B PWM) | **GPIO 38** | LEDC Channel 2 | Right Speed PWM (20 kHz) |
+| **Onboard RGB** | WS2812 DIN | **GPIO 48** | RMT / SPI Strip | Onboard DevKit LED |
+
+> [!TIP]
+> For complete wiring schematics, power supply isolation rules, and jumper configurations, consult the **[Motor Driver Hardware Guide](docs/MOTOR_DRIVER.md)**.
+
+---
+
+## 📂 Project Structure
 
 ```
-├── CMakeLists.txt
-├── pytest_hello_world.py      Python script used for automated testing
-├── main
-│   ├── CMakeLists.txt
-│   └── hello_world_main.c
-└── README.md                  This is the file you are currently reading
+FlowPilot-esp32s3/
+├── CMakeLists.txt              # Root CMake project configuration
+├── README.md                   # Primary project documentation
+├── sdkconfig.defaults          # ESP32-S3 default configs (PSRAM, Flash, FreeRTOS)
+├── docs/
+│   └── MOTOR_DRIVER.md         # Dedicated L829 / L298N wiring & integration guide
+├── components/
+│   └── LovyanGFX/              # Ultra-fast display driver component
+├── main/
+│   ├── CMakeLists.txt          # Main component build rules and dependencies
+│   ├── idf_component.yml       # ESP-IDF component dependencies
+│   ├── main.cpp                # app_main & dual-core task orchestrator
+│   ├── LGFX_Config.hpp         # LovyanGFX panel, bus, backlight & touch setup
+│   ├── RobotFace.hpp / .cpp    # 60 FPS procedural emotional face engine
+│   ├── MotorDriver.hpp / .cpp  # L829 / L298N dual H-bridge motor driver
+│   ├── L829Driver.hpp          # Forwarding header for L829 naming
+│   ├── L298NDriver.hpp         # Forwarding header for L298N naming
+│   ├── RgbLed.hpp / .cpp       # WS2812 emotion-synced RGB LED controller
+│   └── WifiManager.hpp / .cpp  # SoftAP, Station, and HUD telemetry manager
 ```
 
-For more information on structure and contents of ESP-IDF projects, please refer to Section [Build System](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/build-system.html) of the ESP-IDF Programming Guide.
+---
 
-## Troubleshooting
+## 🚀 Quick Start & Building
 
-* Program upload failure
+### Prerequisites
+- **ESP-IDF**: Version 5.1 or newer (tested on **ESP-IDF v6.1**).
+- **Target Hardware**: ESP32-S3 development board (16MB Flash QIO, 8MB Octal PSRAM).
+- **Display**: 2.8" or 3.2" SPI TFT ILI9341 (320x240) with XPT2046 touch controller.
+- **Motor Driver**: L829 / L298N dual H-bridge module with 2 DC gearmotors.
 
-    * Hardware connection is not correct: run `idf.py -p PORT monitor`, and reboot your board to see if there are any output logs.
-    * The baud rate for downloading is too high: lower your baud rate in the `menuconfig` menu, and try again.
+### 1. Set Up Environment
+```bash
+# Source the ESP-IDF environment
+. $HOME/esp/esp-idf/export.sh
+# (or your local ESP-IDF path, e.g. . ~/.espressif/v6.1/esp-idf/export.sh)
+```
 
-## Technical support and feedback
+### 2. Set Target & Build
+```bash
+# Set target chip to ESP32-S3
+idf.py set-target esp32s3
 
-Please use the following feedback channels:
+# Compile the firmware
+idf.py build
+```
 
-* For technical queries, go to the [esp32.com](https://esp32.com/) forum
-* For a feature request or bug report, create a [GitHub issue](https://github.com/espressif/esp-idf/issues)
+### 3. Flash & Monitor
+```bash
+# Flash firmware and launch serial console (replace /dev/ttyACM0 with your serial port)
+idf.py -p /dev/ttyACM0 flash monitor
+```
 
-We will get back to you as soon as possible.
+*Press `Ctrl + ]` to exit the serial monitor.*
+
+---
+
+## 💻 Code Usage Examples
+
+### Controlling Motors via Differential Drive
+```cpp
+#include "MotorDriver.hpp"
+
+// Access the global MotorDriver instance
+MotorDriver& motors = getMotorDriver();
+
+// Arcade drive: drive(throttle, steering)
+motors.drive(1.0f, 0.0f);    // Drive straight forward at 100% speed
+motors.drive(-0.5f, 0.0f);   // Drive backward at 50% speed
+motors.drive(0.8f, 0.4f);    // Forward with a right turn
+motors.spinLeft(0.7f);       // Spin in place counter-clockwise
+
+// Stop options
+motors.stop(true);           // Active electrical short-brake (immediate stop)
+motors.stop(false);          // Free-wheeling coast to a halt
+```
+
+### Cycling Robot Face Emotions
+```cpp
+#include "RobotFace.hpp"
+
+// Set specific emotional state
+robotFace.setEmotion(RobotEmotion::Happy);
+robotFace.setEmotion(RobotEmotion::Excited);
+
+// Or advance to the next emotion
+robotFace.nextEmotion();
+```
+
+### Customizing Motor Pins & Dynamics
+```cpp
+MotorDriverConfig cfg;
+cfg.in1Pin = GPIO_NUM_1;
+cfg.in2Pin = GPIO_NUM_2;
+cfg.enaPin = GPIO_NUM_3;
+cfg.slewRate = 2.0f;        // Gentle acceleration (prevents high inrush currents)
+cfg.minSpeed = 0.20f;       // Minimum 20% speed to overcome gearbox friction
+cfg.invertLeft = false;
+cfg.invertRight = true;     // Flip right motor if mounted 180 degrees reversed
+
+getMotorDriver().setConfig(cfg);
+```
+
+---
+
+## 🔧 Power & Troubleshooting
+
+- **Motor Supply vs ESP32 Supply**: Always power DC motors through an external battery pack (7.4V–12V). **Connect all grounds (ESP32 GND, Battery GND, L298N GND) together.**
+- **Brownout Resets**: Sudden high-speed motor transitions can pull battery voltage down. Slew rate ramping is enabled by default (`config.enableRamping = true`) to smoothly ramp power.
+- **Touch Calibration**: Touch screen calibration coordinates can be fine-tuned in [main/LGFX_Config.hpp](main/LGFX_Config.hpp) (`x_min`, `x_max`, `y_min`, `y_max`).
+
+---
+
+## 📜 License
+
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
