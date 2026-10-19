@@ -9,9 +9,18 @@
 #include "LGFX_Config.hpp"
 #include "RobotFace.hpp"
 #include "RgbLed.hpp"
-#include "WifiManager.hpp"
 #include "MotorDriver.hpp"
+#include "SdCardManager.hpp"
 #include <esp_private/brownout.h>
+
+/**
+ * @brief Wi-Fi feature toggle (0 = disabled, 1 = enabled)
+ */
+#define ENABLE_WIFI 0
+
+#if ENABLE_WIFI
+#include "WifiManager.hpp"
+#endif
 
 static const char *TAG = "ROBOT_MAIN";
 
@@ -93,7 +102,8 @@ static void robot_face_task(void *pvParameters) {
         rgbLed.syncWithFace(robotFace);
         rgbLed.update(dt);
 
-        // 4. Sync Wi-Fi telemetry to RobotFace HUD
+        // 4. Sync Wi-Fi telemetry to RobotFace HUD (if enabled)
+#if ENABLE_WIFI
         const WifiTelemetry& wifiTelem = WifiManager::getInstance().getTelemetry();
         robotFace.setWifiStatus(
             wifiTelem.mode != WifiMode::Off,
@@ -102,8 +112,14 @@ static void robot_face_task(void *pvParameters) {
             wifiTelem.rssi,
             wifiTelem.connectedClients
         );
+#else
+        robotFace.setWifiStatus(false, false, false, 0, 0);
+#endif
 
-        // 5. Render frame to double-buffer sprite and push to display
+        // 5. Sync SD Card status to RobotFace HUD
+        robotFace.setSdCardStatus(getSdCardManager().isMounted());
+
+        // 6. Render frame to double-buffer sprite and push to display
         robotFace.render();
 
         frameCount++;
@@ -111,10 +127,17 @@ static void robot_face_task(void *pvParameters) {
         // Periodic FPS telemetry
         if (frameStart - fpsLogTime >= 5000000) { // Every 5 seconds
             float actualFps = (float)frameCount / ((float)(frameStart - fpsLogTime) / 1000000.0f);
-            ESP_LOGI(TAG, "Display Status: running at %.1f FPS | Current Emotion: %d | Wi-Fi: %s (Clients: %u)",
+#if ENABLE_WIFI
+            ESP_LOGI(TAG, "Display Status: running at %.1f FPS | Emotion: %d | SD: %s | Wi-Fi: %s (Clients: %u)",
                      actualFps, (int)robotFace.getEmotion(),
+                     getSdCardManager().isMounted() ? "Mounted" : "Not Detected",
                      wifiTelem.isApActive ? "Hotspot Active" : (wifiTelem.isConnected ? "Connected" : "Offline"),
                      wifiTelem.connectedClients);
+#else
+            ESP_LOGI(TAG, "Display Status: running at %.1f FPS | Emotion: %d | SD: %s | Wi-Fi: Disabled",
+                     actualFps, (int)robotFace.getEmotion(),
+                     getSdCardManager().isMounted() ? "Mounted" : "Not Detected");
+#endif
             fpsLogTime = frameStart;
             frameCount = 0;
         }
@@ -138,32 +161,50 @@ extern "C" void app_main(void) {
     esp_reset_reason_t rstReason = esp_reset_reason();
     ESP_LOGI(TAG, "=== FlowPilot-esp32s3 Starting | Reset Reason: %d ===", (int)rstReason);
 
-    // 1. Initialize Wi-Fi & SoftAP Hotspot
-    WifiManager& wifiMgr = WifiManager::getInstance();
-    if (wifiMgr.init() == ESP_OK) {
-        wifiMgr.startAP("FlowPilot-AP", "flowpilot123", 1, 4);
-        ESP_LOGI(TAG, "Wi-Fi Hotspot active -> SSID: FlowPilot-AP, Pass: flowpilot123, Gateway: %s",
-                 wifiMgr.getApIp());
+    // 1. Deselect display and touch chip selects (held inactive HIGH during bus initialization)
+    // NOTE: Do NOT configure GPIO 4 here; the SDSPI driver will configure and manage GPIO 4 (SD CS) directly.
+    gpio_config_t csConf = {
+        .pin_bit_mask = (1ULL << GPIO_NUM_5) | (1ULL << GPIO_NUM_10),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&csConf);
+    gpio_set_level(GPIO_NUM_5, 1);  // Touch CS inactive
+    gpio_set_level(GPIO_NUM_10, 1); // Display CS inactive
+
+    // 2. Initialize SD Card subsystem FIRST (matches FlxOS boot architecture: priority 15 before Display priority 20)
+    // CS: GPIO 4, shared SPI2 on MOSI: 11, MISO: 13, SCLK: 12, Mount: /sdcard
+    ESP_LOGI(TAG, "Initializing SD Card subsystem (CS: GPIO 4, Mount: /sdcard)...");
+    esp_err_t sdErr = getSdCardManager().init();
+    if (sdErr == ESP_OK) {
+        ESP_LOGI(TAG, "SD Card mounted successfully at /sdcard.");
+        getSdCardManager().testCard();
     } else {
-        ESP_LOGE(TAG, "Failed to initialize Wi-Fi subsystem!");
+        ESP_LOGW(TAG, "SD Card not mounted (%s). Operating in internal storage mode.", esp_err_to_name(sdErr));
     }
 
-    // 2. Initialize Display Controller (now that RF calibration has concluded)
+    // 3. Initialize LovyanGFX Display Controller (attaches to SPI2 bus initialized or cleaned by SD Card)
     ESP_LOGI(TAG, "Initializing LovyanGFX display (ESP32-S3 + ILI9341 + XPT2046)...");
     if (!display.init()) {
         ESP_LOGE(TAG, "LovyanGFX display initialization failed!");
         return;
     }
 
+    // Release bus lock left open by LovyanGFX display init (matching FlxOS LgfxDisplayDevice.cpp:92)
+    display.endWrite();
+
     // Landscape orientation: 320 x 240
     display.setRotation(1);
     display.setColorDepth(16);
     display.setBrightness(200); // 200/255 provides bright visuals with low current draw
     display.fillScreen(TFT_BLACK);
+    display.endWrite();
 
     ESP_LOGI(TAG, "LovyanGFX display initialized (320x240 landscape).");
 
-    // 3. Initialize Onboard WS2812 RGB LED on GPIO 48
+    // 4. Initialize Onboard WS2812 RGB LED on GPIO 48
     esp_err_t ledErr = rgbLed.init(GPIO_NUM_48);
     if (ledErr == ESP_OK) {
         rgbLed.setMode(RgbLedMode::EmotionSync);
@@ -172,7 +213,7 @@ extern "C" void app_main(void) {
         ESP_LOGW(TAG, "Onboard RGB LED initialization returned: %s", esp_err_to_name(ledErr));
     }
 
-    // 4. Initialize L298N / L829 Dual H-Bridge Motor Driver (4-wire direct PWM, ENA/ENB excluded)
+    // 5. Initialize L298N / L829 Dual H-Bridge Motor Driver (4-wire direct PWM, ENA/ENB excluded)
     esp_err_t motorErr = getMotorDriver().init();
     if (motorErr == ESP_OK) {
         ESP_LOGI(TAG, "L298N / L829 Motor Driver initialized (4-wire direct PWM: IN1=15, IN2=16 | IN3=18, IN4=17 | ENA/ENB excluded).");
@@ -180,7 +221,31 @@ extern "C" void app_main(void) {
         ESP_LOGE(TAG, "Motor driver initialization returned: %s", esp_err_to_name(motorErr));
     }
 
-    // 5. Launch RobotFace animation task pinned to Core 1 for optimal jitter-free performance
+    // 6. Initialize Connectivity & Wi-Fi Stack (matches FlxOS priority 30 after Display & Storage)
+#if ENABLE_WIFI
+    ESP_LOGI(TAG, "Initializing FlxOS-aligned Wi-Fi Connectivity Manager...");
+    WifiManager& wifiMgr = WifiManager::getInstance();
+    if (wifiMgr.init() == ESP_OK) {
+        // Start SoftAP Hotspot
+        wifiMgr.startAP("FlowPilot-AP", "flowpilot123", 1, 4);
+        ESP_LOGI(TAG, "Wi-Fi Hotspot active -> SSID: FlowPilot-AP, Pass: flowpilot123, Gateway: %s",
+                 wifiMgr.getApIp());
+
+        // Check for boot-media provisioning from SD card (/sdcard/provisioning/wifi or /sdcard/wifi.json)
+        if (getSdCardManager().isMounted()) {
+            wifiMgr.importFromBootMedia();
+        } else {
+            // Attempt auto-connect to best known network from NVS store
+            wifiMgr.connectBestKnownNetwork();
+        }
+    } else {
+        ESP_LOGE(TAG, "Failed to initialize Wi-Fi subsystem!");
+    }
+#else
+    ESP_LOGI(TAG, "Wi-Fi subsystem disabled (ENABLE_WIFI=0).");
+#endif
+
+    // 6. Launch RobotFace animation task pinned to Core 1 for optimal jitter-free performance
     xTaskCreatePinnedToCore(
         robot_face_task,
         "robot_face",

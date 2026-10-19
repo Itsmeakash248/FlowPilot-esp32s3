@@ -162,6 +162,7 @@ RobotFace::RobotFace(LGFX& disp)
     , wifiConnected(false)
     , wifiRssi(0)
     , wifiClientCount(0)
+    , sdCardMounted(false)
 {
     currentTheme = getEmotionTheme(RobotEmotion::Neutral);
     targetTheme = currentTheme;
@@ -390,6 +391,10 @@ void RobotFace::setWifiStatus(bool enabled, bool isAp, bool isConnected, int8_t 
     wifiConnected = isConnected;
     wifiRssi = rssi;
     wifiClientCount = clientCount;
+}
+
+void RobotFace::setSdCardStatus(bool mounted) {
+    sdCardMounted = mounted;
 }
 
 void RobotFace::handleTouch(int32_t x, int32_t y) {
@@ -772,6 +777,17 @@ void RobotFace::drawVisorHUD() {
             canvas.setTextColor(blink ? currentTheme.glow : currentTheme.primary, currentTheme.bg);
             canvas.drawString("LINK...", wx, wy + 1);
         }
+    }
+
+    // 2c. Cybernetic SD Card Status Indicator
+    if (sdCardMounted) {
+        constexpr int32_t sdx = 188, sdy = by;
+        canvas.setTextSize(1);
+        canvas.setTextColor(currentTheme.accent, currentTheme.bg);
+        canvas.drawString("SD", sdx, sdy + 1);
+        // Micro-SD card outline badge
+        canvas.drawRect(sdx + 14, sdy + 1, 6, 8, currentTheme.primary);
+        canvas.drawPixel(sdx + 14, sdy + 1, currentTheme.bg);
     }
 
     // 3. Top-Right Neural Telemetry ECG Wave
