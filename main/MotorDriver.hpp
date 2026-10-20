@@ -73,7 +73,9 @@ struct MotorTelemetry {
     float currentRight = 0.0f;   ///< Actual smoothed right motor speed [-1.0 .. 1.0]
     float throttle = 0.0f;       ///< Commanded longitudinal throttle [-1.0 .. 1.0]
     float steering = 0.0f;       ///< Commanded rotational steering [-1.0 .. 1.0]
-    bool isBraking = false;      ///< True if active electrical brake is engaged
+    bool isBraking = false;      ///< True if active electrical brake is engaged on either motor
+    bool isBrakingLeft = false;  ///< True if active electrical brake is engaged on Left motor (Motor A)
+    bool isBrakingRight = false; ///< True if active electrical brake is engaged on Right motor (Motor B)
     bool isMoving = false;       ///< True if motors are actively driving
 };
 
@@ -202,6 +204,14 @@ public:
         config.invertRight = invertRight;
     }
 
+    // Diagnostics & Hardware Self-Test
+    /**
+     * @brief Run an automated sequential diagnostic test on both motors
+     * @param stepDurationMs Duration for each active motion phase in ms
+     * @param speed Target test speed (0.15 .. 1.0)
+     */
+    void runDiagnosticTest(uint32_t stepDurationMs = 1500, float speed = 0.40f);
+
     // Telemetry & Status Queries
     const MotorTelemetry& getTelemetry() const { return telemetry; }
     bool isMoving() const { return telemetry.isMoving; }
@@ -218,7 +228,7 @@ private:
     void configurePwm();
     void applyHardwareOutputs(float leftSpeed, float rightSpeed);
     void applyMotorHBridge(gpio_num_t in1, gpio_num_t in2, ledc_channel_t pwmChan,
-                           ledc_channel_t pwmChan2, float speed, bool inverted);
+                           ledc_channel_t pwmChan2, float speed, bool inverted, bool isBraking);
     float applyDeadzone(float normalizedSpeed);
 };
 

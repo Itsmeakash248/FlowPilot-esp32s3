@@ -27,7 +27,7 @@ public:
             // SPI host 2 corresponds to SPI2_HOST (FSPI on ESP32-S3)
             cfg.spi_host   = SPI2_HOST;
             cfg.spi_mode   = 0;
-            cfg.freq_write = 40000000;    // 40 MHz write frequency
+            cfg.freq_write = 40000000;    // 40 MHz stable write frequency for ILI9341
             cfg.freq_read  = 16000000;    // 16 MHz read frequency
             cfg.spi_3wire  = false;       // 4-wire SPI (MOSI/MISO separate)
             cfg.use_lock   = true;        // SPI bus shared with touch & SD card

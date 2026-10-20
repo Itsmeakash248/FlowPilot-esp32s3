@@ -1,260 +1,452 @@
-#include <stdio.h>
-#include <cmath>
-#include <algorithm>
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <algorithm>
+#include <cmath>
+#include <stdio.h>
 
 #include "LGFX_Config.hpp"
-#include "RobotFace.hpp"
-#include "RgbLed.hpp"
 #include "MotorDriver.hpp"
+#include "PerfMonitor.hpp"
+#include "RearLed.hpp"
+#include "RgbLed.hpp"
+#include "RobotFace.hpp"
 #include "SdCardManager.hpp"
+#include "driver/gpio.h"
 #include <esp_private/brownout.h>
+#include <esp_rom_sys.h>
 
 /**
- * @brief Wi-Fi feature toggle (0 = disabled, 1 = enabled)
+ * @brief Subsystem feature toggles (0 = disabled, 1 = enabled)
  */
 #define ENABLE_WIFI 0
+#define ENABLE_SD_CARD 0
+#define ENABLE_REAR_LED 0
+#define ENABLE_MOTOR_TEST 1
 
 #if ENABLE_WIFI
 #include "WifiManager.hpp"
 #endif
 
+#if ENABLE_MOTOR_TEST
+#include "MotorTest.hpp"
+#endif
+
+/**
+ * @brief Hardware & configuration constants
+ */
+static constexpr uint8_t RGB_LED_MAX_BRIGHTNESS =
+    RgbLed::MAX_BRIGHTNESS_LIMIT; ///< Safe hardware limit capped at 20% (51 / 255
+                                  ///< = 20.0%)
+static constexpr const char *SD_CARD_MOUNT_POINT =
+    SdCardConfig::DEFAULT_MOUNT_POINT; ///< Standard SD Card mount point
+                                       ///< ("/sdcard")
+
 static const char *TAG = "ROBOT_MAIN";
 
 static LGFX display;
 static RgbLed rgbLed;
+#if ENABLE_REAR_LED
+static RearLed rearLed;
+
+static const char *getRearLedModeName(RearLedMode mode) {
+  switch (mode) {
+  case RearLedMode::Off:         return "Off";
+  case RearLedMode::Solid:       return "Solid";
+  case RearLedMode::Breathing:   return "Breathing";
+  case RearLedMode::Blink:       return "Blink";
+  case RearLedMode::Heartbeat:   return "Heartbeat";
+  case RearLedMode::ReverseSync: return "ReverseSync";
+  case RearLedMode::EmotionSync: return "EmotionSync";
+  default:                       return "Unknown";
+  }
+}
+#endif
+
+static const char *getEmotionName(RobotEmotion emo) {
+  switch (emo) {
+  case RobotEmotion::Neutral:   return "Neutral";
+  case RobotEmotion::Happy:     return "Happy";
+  case RobotEmotion::Curious:   return "Curious";
+  case RobotEmotion::Surprised: return "Surprised";
+  case RobotEmotion::Focused:   return "Focused";
+  case RobotEmotion::Sleepy:    return "Sleepy";
+  case RobotEmotion::Wink:      return "Wink";
+  case RobotEmotion::Sad:       return "Sad";
+  case RobotEmotion::Rage:      return "Rage";
+  case RobotEmotion::Dasara:    return "Happy Dasara";
+  default:                      return "Unknown";
+  }
+}
+
+static RobotFace robotFace(display);
 
 /**
- * @brief FreeRTOS task handling the high-speed 60 FPS animation loop and touch processing
+ * @brief Core 0 Task: Robot Supervisor, Autonomous AI, Kinematics, Motor Slew, LEDs & Telemetry (100 Hz)
  */
-static void robot_face_task(void *pvParameters) {
-    ESP_LOGI(TAG, "Starting RobotFace animation engine...");
+static void robot_control_task(void *pvParameters) {
+  ESP_LOGI(TAG, "Starting FlowPilot Robot Control Engine on Core 0 (PRO_CPU)...");
 
-    RobotFace robotFace(display);
-    if (!robotFace.init()) {
-        ESP_LOGE(TAG, "Failed to initialize RobotFace!");
-        vTaskDelete(NULL);
-        return;
+  int64_t lastTime = esp_timer_get_time();
+  int64_t fpsLogTime = lastTime;
+
+  while (true) {
+    int64_t loopStart = esp_timer_get_time();
+    float dt = (float)(loopStart - lastTime) / 1000000.0f;
+    lastTime = loopStart;
+
+    // Cap dt to prevent massive jumps during debug pauses
+    if (dt > 0.05f) {
+      dt = 0.05f;
     }
 
-    ESP_LOGI(TAG, "RobotFace initialized. Entering interactive 60 FPS loop...");
+    // 1. Update performance telemetry monitor
+    PerfMonitor &perf = PerfMonitor::getInstance();
+    perf.update(dt);
+    robotFace.setPerfStats(perf.getFps(), perf.getCpuCore1(), perf.getCpuCore2(),
+                           perf.getCpuTotal(), perf.getFreeHeap());
 
-    int64_t lastTime = esp_timer_get_time();
-    int64_t fpsLogTime = lastTime;
-    uint32_t frameCount = 0;
+    // 2. Update robot kinematics, autonomous behaviors, and motor driver slew rates
+    robotFace.update(dt);
+    getMotorDriver().update(dt);
 
-    // Touch gesture tracking state
-    bool wasTouching = false;
-    int32_t touchStartX = 0, touchStartY = 0;
-    int64_t touchStartTime = 0;
-
-    while (true) {
-        int64_t frameStart = esp_timer_get_time();
-        float dt = (float)(frameStart - lastTime) / 1000000.0f;
-        lastTime = frameStart;
-
-        // Cap dt to prevent massive jumps during debug pauses
-        if (dt > 0.05f) {
-            dt = 0.05f;
-        }
-
-        // 1. Process XPT2046 Touch Screen Input
-        int32_t touchX = 0, touchY = 0;
-        bool isTouching = (display.getTouch(&touchX, &touchY) > 0);
-
-        if (isTouching) {
-            if (!wasTouching) {
-                // Touch press started
-                wasTouching = true;
-                touchStartX = touchX;
-                touchStartY = touchY;
-                touchStartTime = frameStart;
-            }
-
-            // Continuous tracking (eyes follow user's finger)
-            robotFace.handleTouch(touchX, touchY);
-        } else {
-            if (wasTouching) {
-                // Touch release detected: check for tap gesture
-                int64_t touchDurationMs = (frameStart - touchStartTime) / 1000;
-                int32_t dx = std::abs(touchX - touchStartX);
-                int32_t dy = std::abs(touchY - touchStartY);
-
-                // Quick tap (< 350ms with minimal travel distance)
-                if (touchDurationMs < 350 && dx < 25 && dy < 25) {
-                    ESP_LOGI(TAG, "Screen tap detected! Cycling to next emotion...");
-                    robotFace.nextEmotion();
-                }
-
-                robotFace.releaseTouch();
-                wasTouching = false;
-            }
-        }
-
-        // 2. Update robot kinematics, behaviors, and animations
-        robotFace.update(dt);
-        getMotorDriver().update(dt);
-
-        // 3. Update onboard RGB LED (GPIO 48) synchronized with emotion & breathing
-        rgbLed.syncWithFace(robotFace);
-        rgbLed.update(dt);
-
-        // 4. Sync Wi-Fi telemetry to RobotFace HUD (if enabled)
-#if ENABLE_WIFI
-        const WifiTelemetry& wifiTelem = WifiManager::getInstance().getTelemetry();
-        robotFace.setWifiStatus(
-            wifiTelem.mode != WifiMode::Off,
-            wifiTelem.isApActive,
-            wifiTelem.isConnected,
-            wifiTelem.rssi,
-            wifiTelem.connectedClients
-        );
-#else
-        robotFace.setWifiStatus(false, false, false, 0, 0);
+    // 3. Update Rear Blue LED (GPIO 21) & Onboard RGB LED (GPIO 48)
+#if ENABLE_REAR_LED
+    rearLed.syncWithMotors(getMotorDriver());
+    rearLed.syncWithFace(robotFace);
+    rearLed.update(dt);
 #endif
 
-        // 5. Sync SD Card status to RobotFace HUD
-        robotFace.setSdCardStatus(getSdCardManager().isMounted());
+    rgbLed.syncWithFace(robotFace);
+    rgbLed.update(dt);
 
-        // 6. Render frame to double-buffer sprite and push to display
-        robotFace.render();
-
-        frameCount++;
-
-        // Periodic FPS telemetry
-        if (frameStart - fpsLogTime >= 5000000) { // Every 5 seconds
-            float actualFps = (float)frameCount / ((float)(frameStart - fpsLogTime) / 1000000.0f);
+    // 4. Sync Wi-Fi telemetry to RobotFace HUD (if enabled)
 #if ENABLE_WIFI
-            ESP_LOGI(TAG, "Display Status: running at %.1f FPS | Emotion: %d | SD: %s | Wi-Fi: %s (Clients: %u)",
-                     actualFps, (int)robotFace.getEmotion(),
-                     getSdCardManager().isMounted() ? "Mounted" : "Not Detected",
-                     wifiTelem.isApActive ? "Hotspot Active" : (wifiTelem.isConnected ? "Connected" : "Offline"),
-                     wifiTelem.connectedClients);
+    const WifiTelemetry &wifiTelem = WifiManager::getInstance().getTelemetry();
+    robotFace.setWifiStatus(wifiTelem.mode != WifiMode::Off,
+                            wifiTelem.isApActive, wifiTelem.isConnected,
+                            wifiTelem.rssi, wifiTelem.connectedClients);
 #else
-            ESP_LOGI(TAG, "Display Status: running at %.1f FPS | Emotion: %d | SD: %s | Wi-Fi: Disabled",
-                     actualFps, (int)robotFace.getEmotion(),
-                     getSdCardManager().isMounted() ? "Mounted" : "Not Detected");
+    robotFace.setWifiStatus(false, false, false, 0, 0);
 #endif
-            fpsLogTime = frameStart;
-            frameCount = 0;
-        }
 
-        // 6. Rate-limiting sleep to target ~60 FPS (16.6ms per frame)
-        int64_t frameElapsed = esp_timer_get_time() - frameStart;
-        int64_t targetSleepUs = 16666 - frameElapsed;
+    // 5. Sync SD Card status to RobotFace HUD
+#if ENABLE_SD_CARD
+    robotFace.setSdCardStatus(getSdCardManager().isMounted());
+#else
+    robotFace.setSdCardStatus(false);
+#endif
 
-        if (targetSleepUs > 1500) {
-            vTaskDelay(pdMS_TO_TICKS(targetSleepUs / 1000));
-        } else {
-            vTaskDelay(1); // Yield to other FreeRTOS tasks
-        }
+    // 6. Periodic FPS & CPU telemetry logging every 5 seconds
+    if (loopStart - fpsLogTime >= 5000000) {
+      float actualFps = perf.getFps();
+      const MotorTelemetry &motorTelem = getMotorDriver().getTelemetry();
+#if ENABLE_MOTOR_TEST
+      const char *motorPhase = getMotorTestPhaseName();
+#else
+      const char *motorPhase = "Disabled";
+#endif
+#if ENABLE_WIFI
+      ESP_LOGI(TAG,
+               "Display Status: %.1f FPS | Core 1: %.1f%% | Core 2: %.1f%% (Total: %.1f%%) | Heap: %u KB | Emotion: %s (%d) | Motors: L: %+.2f R: %+.2f (%s) | Rear LED: %s | SD: %s | "
+               "Wi-Fi: %s (Clients: %u)",
+               actualFps, perf.getCpuCore1(), perf.getCpuCore2(), perf.getCpuTotal(),
+               (unsigned int)(perf.getFreeHeap() / 1024),
+               getEmotionName(robotFace.getEmotion()),
+               (int)robotFace.getEmotion(),
+               motorTelem.currentLeft, motorTelem.currentRight, motorPhase,
+#if ENABLE_REAR_LED
+               getRearLedModeName(rearLed.getMode()),
+#else
+               "Disabled",
+#endif
+#if ENABLE_SD_CARD
+               getSdCardManager().isMounted() ? "Mounted" : "Not Detected",
+#else
+               "Disabled",
+#endif
+               wifiTelem.isApActive
+                   ? "Hotspot Active"
+                   : (wifiTelem.isConnected ? "Connected" : "Offline"),
+               wifiTelem.connectedClients);
+#else
+      ESP_LOGI(TAG,
+               "Display Status: %.1f FPS | Core 1: %.1f%% | Core 2: %.1f%% (Total: %.1f%%) | Heap: %u KB | Emotion: %s (%d) | Motors: L: %+.2f R: %+.2f (%s) | Rear LED: %s | SD: %s | "
+               "Wi-Fi: Disabled",
+               actualFps, perf.getCpuCore1(), perf.getCpuCore2(), perf.getCpuTotal(),
+               (unsigned int)(perf.getFreeHeap() / 1024),
+               getEmotionName(robotFace.getEmotion()),
+               (int)robotFace.getEmotion(),
+               motorTelem.currentLeft, motorTelem.currentRight, motorPhase,
+#if ENABLE_REAR_LED
+               getRearLedModeName(rearLed.getMode()),
+#else
+               "Disabled",
+#endif
+#if ENABLE_SD_CARD
+               getSdCardManager().isMounted() ? "Mounted" : "Not Detected");
+#else
+               "Disabled");
+#endif
+#endif
+      fpsLogTime = loopStart;
     }
+
+    // 7. Cadence control: Maintain crisp 100 Hz control loop (10ms)
+    int64_t elapsedUs = esp_timer_get_time() - loopStart;
+    int64_t targetSleepUs = 10000 - elapsedUs;
+
+    if (targetSleepUs > 1500) {
+      vTaskDelay(pdMS_TO_TICKS(targetSleepUs / 1000));
+    } else {
+      vTaskDelay(pdMS_TO_TICKS(1));
+    }
+  }
+}
+
+/**
+ * @brief Core 1 Task: Dedicated High-Speed Graphics Rasterizer, SPI Display Push & Touch Processing
+ */
+static void robot_render_task(void *pvParameters) {
+  ESP_LOGI(TAG, "Starting RobotFace graphics rendering & touch engine on Core 1 (APP_CPU)...");
+
+  // Touch gesture tracking state
+  bool wasTouching = false;
+  int32_t touchStartX = 0, touchStartY = 0;
+  int64_t touchStartTime = 0;
+
+  while (true) {
+    int64_t frameStart = esp_timer_get_time();
+
+    // 1. Process XPT2046 Touch Screen Input (Hardware SPI2 managed exclusively on Core 1)
+    int32_t touchX = 0, touchY = 0;
+    bool isTouching = (display.getTouch(&touchX, &touchY) > 0);
+
+    if (isTouching) {
+      if (!wasTouching) {
+        // Touch press started
+        wasTouching = true;
+        touchStartX = touchX;
+        touchStartY = touchY;
+        touchStartTime = frameStart;
+      }
+
+      // Continuous tracking (eyes follow user's finger)
+      robotFace.handleTouch(touchX, touchY);
+    } else {
+      if (wasTouching) {
+        // Touch release detected: check for tap gesture
+        int64_t touchDurationMs = (frameStart - touchStartTime) / 1000;
+        int32_t dx = std::abs(touchX - touchStartX);
+        int32_t dy = std::abs(touchY - touchStartY);
+
+        // Quick tap (< 350ms with minimal travel distance)
+        if (touchDurationMs < 350 && dx < 25 && dy < 25) {
+          if (robotFace.isTouchOnOverlay(touchStartX, touchStartY)) {
+            robotFace.cyclePerfOverlayMode();
+            ESP_LOGI(TAG, "Touch on overlay detected! Cycled PerfOverlayMode to %d",
+                     (int)robotFace.getPerfOverlayMode());
+          } else {
+            ESP_LOGI(TAG, "Screen tap detected! Cycling to next emotion...");
+            robotFace.nextEmotion();
+          }
+        }
+
+        robotFace.releaseTouch();
+        wasTouching = false;
+      }
+    }
+
+    // 2. Render frame to double-buffer sprite and push to display via SPI
+    robotFace.render();
+    PerfMonitor::getInstance().onFrameRendered();
+
+    // 3. Dynamic Frame Pacing & Cooperative FreeRTOS Yielding
+    // Targets ~30 FPS with guaranteed cooperative idle time so Core 1 is balanced
+    int64_t frameElapsed = esp_timer_get_time() - frameStart;
+    int64_t targetSleepUs = 33333 - frameElapsed;
+
+    if (targetSleepUs > 2000) {
+      vTaskDelay(pdMS_TO_TICKS(targetSleepUs / 1000));
+    } else {
+      // Cooperative yield: ensure IDLE task on Core 1 gets at least 3ms every frame
+      vTaskDelay(pdMS_TO_TICKS(3));
+    }
+  }
 }
 
 extern "C" void app_main(void) {
-    // Disable brownout detector to prevent false-positive software resets during RF startup on USB power
-    esp_brownout_disable();
+  // Disable brownout detector to prevent false-positive software resets during
+  // RF startup on USB power
+  esp_brownout_disable();
 
-    esp_reset_reason_t rstReason = esp_reset_reason();
-    ESP_LOGI(TAG, "=== FlowPilot-esp32s3 Starting | Reset Reason: %d ===", (int)rstReason);
+  esp_reset_reason_t rstReason = esp_reset_reason();
+  ESP_LOGI(TAG, "=== FlowPilot-esp32s3 [Happy Dasara Edition ✨] Starting | Reset Reason: %d ===",
+           (int)rstReason);
 
-    // 1. Deselect display and touch chip selects (held inactive HIGH during bus initialization)
-    // NOTE: Do NOT configure GPIO 4 here; the SDSPI driver will configure and manage GPIO 4 (SD CS) directly.
-    gpio_config_t csConf = {
-        .pin_bit_mask = (1ULL << GPIO_NUM_5) | (1ULL << GPIO_NUM_10),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&csConf);
-    gpio_set_level(GPIO_NUM_5, 1);  // Touch CS inactive
-    gpio_set_level(GPIO_NUM_10, 1); // Display CS inactive
+  // Initialize Performance & CPU telemetry engine
+  PerfMonitor::getInstance().init();
 
-    // 2. Initialize SD Card subsystem FIRST (matches FlxOS boot architecture: priority 15 before Display priority 20)
-    // CS: GPIO 4, shared SPI2 on MOSI: 11, MISO: 13, SCLK: 12, Mount: /sdcard
-    ESP_LOGI(TAG, "Initializing SD Card subsystem (CS: GPIO 4, Mount: /sdcard)...");
-    esp_err_t sdErr = getSdCardManager().init();
-    if (sdErr == ESP_OK) {
-        ESP_LOGI(TAG, "SD Card mounted successfully at /sdcard.");
-        getSdCardManager().testCard();
-    } else {
-        ESP_LOGW(TAG, "SD Card not mounted (%s). Operating in internal storage mode.", esp_err_to_name(sdErr));
-    }
+  // 1. Deselect display and touch chip selects (held inactive HIGH during bus
+  // initialization) NOTE: Do NOT configure GPIO 4 here; the SDSPI driver will
+  // configure and manage GPIO 4 (SD CS) directly.
+  gpio_config_t csConf = {
+      .pin_bit_mask = (1ULL << GPIO_NUM_5) | (1ULL << GPIO_NUM_10),
+      .mode = GPIO_MODE_OUTPUT,
+      .pull_up_en = GPIO_PULLUP_ENABLE,
+      .pull_down_en = GPIO_PULLDOWN_DISABLE,
+      .intr_type = GPIO_INTR_DISABLE,
+  };
+  gpio_config(&csConf);
+  gpio_set_level(GPIO_NUM_5, 1);  // Touch CS inactive
+  gpio_set_level(GPIO_NUM_10, 1); // Display CS inactive
 
-    // 3. Initialize LovyanGFX Display Controller (attaches to SPI2 bus initialized or cleaned by SD Card)
-    ESP_LOGI(TAG, "Initializing LovyanGFX display (ESP32-S3 + ILI9341 + XPT2046)...");
-    if (!display.init()) {
-        ESP_LOGE(TAG, "LovyanGFX display initialization failed!");
-        return;
-    }
-
-    // Release bus lock left open by LovyanGFX display init (matching FlxOS LgfxDisplayDevice.cpp:92)
-    display.endWrite();
-
-    // Landscape orientation: 320 x 240
-    display.setRotation(1);
-    display.setColorDepth(16);
-    display.setBrightness(200); // 200/255 provides bright visuals with low current draw
-    display.fillScreen(TFT_BLACK);
-    display.endWrite();
-
-    ESP_LOGI(TAG, "LovyanGFX display initialized (320x240 landscape).");
-
-    // 4. Initialize Onboard WS2812 RGB LED on GPIO 48
-    esp_err_t ledErr = rgbLed.init(GPIO_NUM_48);
-    if (ledErr == ESP_OK) {
-        rgbLed.setMode(RgbLedMode::EmotionSync);
-        ESP_LOGI(TAG, "Onboard WS2812 RGB LED (GPIO 48) initialized in EmotionSync mode.");
-    } else {
-        ESP_LOGW(TAG, "Onboard RGB LED initialization returned: %s", esp_err_to_name(ledErr));
-    }
-
-    // 5. Initialize L298N / L829 Dual H-Bridge Motor Driver (4-wire direct PWM, ENA/ENB excluded)
-    esp_err_t motorErr = getMotorDriver().init();
-    if (motorErr == ESP_OK) {
-        ESP_LOGI(TAG, "L298N / L829 Motor Driver initialized (4-wire direct PWM: IN1=15, IN2=16 | IN3=18, IN4=17 | ENA/ENB excluded).");
-    } else {
-        ESP_LOGE(TAG, "Motor driver initialization returned: %s", esp_err_to_name(motorErr));
-    }
-
-    // 6. Initialize Connectivity & Wi-Fi Stack (matches FlxOS priority 30 after Display & Storage)
-#if ENABLE_WIFI
-    ESP_LOGI(TAG, "Initializing FlxOS-aligned Wi-Fi Connectivity Manager...");
-    WifiManager& wifiMgr = WifiManager::getInstance();
-    if (wifiMgr.init() == ESP_OK) {
-        // Start SoftAP Hotspot
-        wifiMgr.startAP("FlowPilot-AP", "flowpilot123", 1, 4);
-        ESP_LOGI(TAG, "Wi-Fi Hotspot active -> SSID: FlowPilot-AP, Pass: flowpilot123, Gateway: %s",
-                 wifiMgr.getApIp());
-
-        // Check for boot-media provisioning from SD card (/sdcard/provisioning/wifi or /sdcard/wifi.json)
-        if (getSdCardManager().isMounted()) {
-            wifiMgr.importFromBootMedia();
-        } else {
-            // Attempt auto-connect to best known network from NVS store
-            wifiMgr.connectBestKnownNetwork();
-        }
-    } else {
-        ESP_LOGE(TAG, "Failed to initialize Wi-Fi subsystem!");
-    }
+  // 2. Initialize SD Card subsystem FIRST (matches FlxOS boot architecture:
+  // priority 15 before Display priority 20) CS: GPIO 4, shared SPI2 on MOSI:
+  // 11, MISO: 13, SCLK: 12, Mount: /sdcard
+#if ENABLE_SD_CARD
+  ESP_LOGI(TAG, "Initializing SD Card subsystem (CS: GPIO 4, Mount: %s)...",
+           SD_CARD_MOUNT_POINT);
+  esp_err_t sdErr = getSdCardManager().init();
+  if (sdErr == ESP_OK) {
+    ESP_LOGI(TAG, "SD Card mounted successfully at %s.", SD_CARD_MOUNT_POINT);
+    getSdCardManager().testCard();
+  } else {
+    ESP_LOGW(TAG,
+             "SD Card not mounted (%s). Operating in internal storage mode.",
+             esp_err_to_name(sdErr));
+  }
 #else
-    ESP_LOGI(TAG, "Wi-Fi subsystem disabled (ENABLE_WIFI=0).");
+  ESP_LOGI(TAG, "SD Card subsystem disabled (ENABLE_SD_CARD=0). Operating in "
+                "internal storage mode.");
 #endif
 
-    // 6. Launch RobotFace animation task pinned to Core 1 for optimal jitter-free performance
-    xTaskCreatePinnedToCore(
-        robot_face_task,
-        "robot_face",
-        8192,
-        NULL,
-        5,      // Priority
-        NULL,
-        1       // Pinned to Core 1
-    );
+  // 3. Initialize LovyanGFX Display Controller (attaches to SPI2 bus
+  // initialized with full DMA by SD Card)
+  ESP_LOGI(TAG,
+           "Initializing LovyanGFX display (ESP32-S3 + ILI9341 + XPT2046)...");
+  if (!display.init()) {
+    ESP_LOGE(TAG, "LovyanGFX display initialization failed!");
+    return;
+  }
 
-    ESP_LOGI(TAG, "app_main initialization complete. Tasks running on dual cores.");
+  // Release bus lock left open by LovyanGFX display init (matching FlxOS
+  // LgfxDisplayDevice.cpp:92)
+  display.endWrite();
+
+  // Landscape orientation: 320 x 240
+  display.setRotation(1);
+  display.setColorDepth(16);
+  display.setBrightness(
+      200); // 200/255 provides bright visuals with low current draw
+  display.fillScreen(TFT_BLACK);
+  display.endWrite();
+
+  ESP_LOGI(TAG, "LovyanGFX display initialized (320x240 landscape).");
+
+  // 3b. Initialize RobotFace Engine
+  if (!robotFace.init()) {
+    ESP_LOGE(TAG, "Failed to initialize RobotFace!");
+    return;
+  }
+  ESP_LOGI(TAG, "RobotFace initialized successfully.");
+
+  // 4. Initialize Onboard WS2812 RGB LED on GPIO 48
+  esp_err_t ledErr = rgbLed.init(GPIO_NUM_48);
+  if (ledErr == ESP_OK) {
+    rgbLed.setBrightness(RGB_LED_MAX_BRIGHTNESS);
+    rgbLed.setMode(RgbLedMode::EmotionSync);
+    ESP_LOGI(TAG,
+             "Onboard WS2812 RGB LED (GPIO 48) initialized in EmotionSync mode "
+             "(Brightness: %u/255, Limit: %u/255 [20%%]).",
+             rgbLed.getBrightness(), RGB_LED_MAX_BRIGHTNESS);
+  } else {
+    ESP_LOGW(TAG, "Onboard RGB LED initialization returned: %s",
+             esp_err_to_name(ledErr));
+  }
+
+  // 4b. Initialize Rear Blue LED on GPIO 21 (LEDC Channel 5, Timer 1, 5 kHz PWM)
+#if ENABLE_REAR_LED
+  esp_err_t rearLedErr = rearLed.init(GPIO_NUM_21);
+  if (rearLedErr == ESP_OK) {
+    rearLed.setBrightness(255);
+    rearLed.setMode(RearLedMode::ReverseSync);
+    ESP_LOGI(TAG,
+             "Rear Blue LED (GPIO 21) initialized at FULL brightness (255/255, 100%%) "
+             "in ReverseSync taillight mode (LEDC Ch 5, Timer 1, 5 kHz, 10-bit PWM).");
+  } else {
+    ESP_LOGW(TAG, "Rear Blue LED initialization returned: %s",
+             esp_err_to_name(rearLedErr));
+  }
+#else
+  gpio_reset_pin(GPIO_NUM_21);
+  gpio_set_direction(GPIO_NUM_21, GPIO_MODE_OUTPUT);
+  gpio_set_level(GPIO_NUM_21, 0);
+  ESP_LOGI(TAG, "Rear Blue LED (GPIO 21): Disabled by configuration toggle (held LOW).");
+#endif
+
+  // 5. Initialize L298N / L829 Dual H-Bridge Motor Driver (4-wire direct PWM,
+  // ENA/ENB excluded)
+  esp_err_t motorErr = getMotorDriver().init();
+  if (motorErr == ESP_OK) {
+    ESP_LOGI(TAG, "L298N / L829 Motor Driver initialized (4-wire direct PWM: "
+                  "IN1=15, IN2=16 | IN3=18, IN4=17 | ENA/ENB excluded).");
+#if ENABLE_MOTOR_TEST
+    ESP_LOGI(TAG, "Starting FlowPilot Dual Motor Hardware Self-Test Suite on Core 0...");
+    startMotorTestTask();
+#endif
+  } else {
+    ESP_LOGE(TAG, "Motor driver initialization returned: %s",
+             esp_err_to_name(motorErr));
+  }
+
+  // 6. Initialize Connectivity & Wi-Fi Stack (matches FlxOS priority 30 after
+  // Display & Storage)
+#if ENABLE_WIFI
+  ESP_LOGI(TAG, "Initializing FlxOS-aligned Wi-Fi Connectivity Manager...");
+  WifiManager &wifiMgr = WifiManager::getInstance();
+  if (wifiMgr.init() == ESP_OK) {
+    // Start SoftAP Hotspot
+    wifiMgr.startAP("FlowPilot-AP", "flowpilot123", 1, 4);
+    ESP_LOGI(TAG,
+             "Wi-Fi Hotspot active -> SSID: FlowPilot-AP, Pass: flowpilot123, "
+             "Gateway: %s",
+             wifiMgr.getApIp());
+
+    // Check for boot-media provisioning from SD card (/sdcard/provisioning/wifi
+    // or /sdcard/wifi.json)
+#if ENABLE_SD_CARD
+    if (getSdCardManager().isMounted()) {
+      wifiMgr.importFromBootMedia();
+    } else {
+      // Attempt auto-connect to best known network from NVS store
+      wifiMgr.connectBestKnownNetwork();
+    }
+#else
+    wifiMgr.connectBestKnownNetwork();
+#endif
+  } else {
+    ESP_LOGE(TAG, "Failed to initialize Wi-Fi subsystem!");
+  }
+#else
+  ESP_LOGI(TAG, "Wi-Fi subsystem disabled (ENABLE_WIFI=0).");
+#endif
+
+  // 6. Launch Core 0: High-speed Control, Kinematics & Hardware Supervisor Task (100 Hz)
+  xTaskCreatePinnedToCore(robot_control_task, "robot_ctrl", 4096, NULL,
+                          4, // Priority
+                          NULL,
+                          0 // Pinned to Core 0 (PRO_CPU)
+  );
+
+  // 7. Launch Core 1: Dedicated Graphics Rasterizer, SPI Display Push & Touch Pipeline
+  xTaskCreatePinnedToCore(robot_render_task, "robot_render", 8192, NULL,
+                          5, // Priority
+                          NULL,
+                          1 // Pinned to Core 1 (APP_CPU)
+  );
+
+  ESP_LOGI(TAG,
+           "app_main complete: Dual-Core SMP Active (Core 0: Control/Kinematics, Core 1: Render/Touch).");
 }

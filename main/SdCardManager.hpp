@@ -23,14 +23,17 @@
  *   - Max Frequency: 20000 kHz (20 MHz)
  */
 struct SdCardConfig {
-    gpio_num_t csPin = GPIO_NUM_4;          ///< SD Card SPI Chip Select pin (GPIO 4)
+    static constexpr const char* DEFAULT_MOUNT_POINT = "/sdcard";
+    static constexpr gpio_num_t DEFAULT_CS_PIN = GPIO_NUM_4;
+
+    gpio_num_t csPin = DEFAULT_CS_PIN;      ///< SD Card SPI Chip Select pin (GPIO 4)
     gpio_num_t mosiPin = GPIO_NUM_11;       ///< Shared SPI MOSI pin (GPIO 11)
     gpio_num_t misoPin = GPIO_NUM_13;       ///< Shared SPI MISO pin (GPIO 13)
     gpio_num_t sclkPin = GPIO_NUM_12;       ///< Shared SPI SCLK pin (GPIO 12)
 
     spi_host_device_t spiHost = SPI2_HOST;  ///< SPI Host (SPI2_HOST = host 2 on ESP32-S3)
     uint32_t maxFreqKhz = 20000;            ///< Maximum SPI frequency in kHz (20 MHz)
-    std::string mountPoint = "/sdcard";     ///< VFS Mount path
+    std::string mountPoint = DEFAULT_MOUNT_POINT; ///< VFS Mount path
     int maxFiles = 5;                       ///< Max simultaneous open files
     bool formatOnFail = false;              ///< Format filesystem if mounting fails
     bool sharedBus = true;                  ///< Set to true when sharing SPI bus with Display/Touch

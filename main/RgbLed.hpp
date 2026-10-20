@@ -29,8 +29,11 @@ public:
     /// Default GPIO for ESP32-S3 DevKit onboard WS2812 RGB LED
     static constexpr gpio_num_t DEFAULT_GPIO_PIN = GPIO_NUM_48;
 
-    /// Default comfortable brightness (0-255) to prevent eye strain and excessive current draw
-    static constexpr uint8_t DEFAULT_BRIGHTNESS = 64;
+    /// Safety limit: Maximum allowed brightness strictly capped to 20% (51 / 255 = 20.0%)
+    static constexpr uint8_t MAX_BRIGHTNESS_LIMIT = 51;
+
+    /// Default comfortable brightness (0-255)
+    static constexpr uint8_t DEFAULT_BRIGHTNESS = 51;
 
     RgbLed();
     ~RgbLed();
@@ -74,11 +77,20 @@ public:
     void setHsv(uint16_t hue, uint8_t sat, uint8_t val);
 
     /**
-     * @brief Set global maximum brightness scaling factor
-     * @param brightness Brightness value (0 = off, 255 = 100% max hardware brightness)
+     * @brief Set global maximum brightness scaling factor (strictly capped to 20% / MAX_BRIGHTNESS_LIMIT)
+     * @param brightness Brightness value (0 = off, max capped at MAX_BRIGHTNESS_LIMIT = 51)
      */
     void setBrightness(uint8_t brightness);
+
+    /**
+     * @brief Set global brightness by percentage (0.0% to 100.0%, clamped to 20.0%)
+     * @param percent Brightness percentage (clamped to max 20.0%)
+     */
+    void setBrightnessPercent(float percent);
+
     uint8_t getBrightness() const { return maxBrightness; }
+    float getBrightnessPercent() const { return ((float)maxBrightness / 255.0f) * 100.0f; }
+    static constexpr uint8_t getMaxBrightnessLimit() { return MAX_BRIGHTNESS_LIMIT; }
 
     /**
      * @brief Turn off the LED and clear internal colors

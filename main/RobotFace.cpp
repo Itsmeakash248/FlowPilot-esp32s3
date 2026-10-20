@@ -1,5 +1,6 @@
 #include "RobotFace.hpp"
 #include <esp_log.h>
+#include <esp_memory_utils.h>
 #include <algorithm>
 #include <cstdlib>
 
@@ -107,6 +108,15 @@ RobotTheme RobotFace::getEmotionTheme(RobotEmotion emotion) {
                 .accent    = 0xFDE0, // Overheat Amber
                 .bg        = BG
             };
+        case RobotEmotion::Dasara:
+            // Royal Festive Saffron, Marigold Gold & Kumkum Vermilion
+            return {
+                .primary   = 0xFE20, // Radiant Saffron / Marigold Gold (RGB: 254, 196, 0)
+                .secondary = 0xFFFF, // Luminous Warm White Core
+                .glow      = 0xA280, // Deep Amber-Saffron Bloom
+                .accent    = 0xF800, // Auspicious Kumkum Crimson Red
+                .bg        = BG
+            };
         case RobotEmotion::Neutral:
         default:
             // Signature Cyber Cyan Companion
@@ -124,8 +134,8 @@ RobotFace::RobotFace(LGFX& disp)
     : display(disp)
     , canvas(&disp)
     , canvasReady(false)
-    , currentEmotion(RobotEmotion::Neutral)
-    , targetEmotion(RobotEmotion::Neutral)
+    , currentEmotion(RobotEmotion::Dasara)
+    , targetEmotion(RobotEmotion::Dasara)
     , themeTransition(1.0f)
     , gazeX(0.0f), targetGazeX(0.0f)
     , gazeY(0.0f), targetGazeY(0.0f)
@@ -163,8 +173,19 @@ RobotFace::RobotFace(LGFX& disp)
     , wifiRssi(0)
     , wifiClientCount(0)
     , sdCardMounted(false)
+    , perfFps(60.0f)
+    , perfCpuCore1(0.0f)
+    , perfCpuCore2(0.0f)
+    , perfCpuTotal(0.0f)
+    , perfFreeHeap(0)
+    , perfMode(PerfOverlayMode::Compact)
+    , perfPos(PerfOverlayPosition::BottomCenter)
+    , overlayX(0)
+    , overlayY(0)
+    , overlayW(0)
+    , overlayH(0)
 {
-    currentTheme = getEmotionTheme(RobotEmotion::Neutral);
+    currentTheme = getEmotionTheme(RobotEmotion::Dasara);
     targetTheme = currentTheme;
     for (int i = 0; i < 9; ++i) {
         voiceHeights[i] = 10.0f;
@@ -178,13 +199,13 @@ RobotFace::~RobotFace() {
 }
 
 bool RobotFace::init() {
-    ESP_LOGI(TAG, "Allocating double-buffered sprite in PSRAM (320x240 RGB565)...");
-    canvas.setPsram(true);
+    ESP_LOGI(TAG, "Allocating double-buffered sprite in internal SRAM for high-speed DMA (320x240 RGB565)...");
+    canvas.setPsram(false);
     canvas.setColorDepth(16);
     void* buf = canvas.createSprite(SCREEN_WIDTH, SCREEN_HEIGHT);
     if (!buf) {
-        ESP_LOGW(TAG, "PSRAM allocation failed, attempting default SRAM allocation...");
-        canvas.setPsram(false);
+        ESP_LOGW(TAG, "Internal SRAM allocation failed, falling back to PSRAM...");
+        canvas.setPsram(true);
         buf = canvas.createSprite(SCREEN_WIDTH, SCREEN_HEIGHT);
     }
 
@@ -195,10 +216,12 @@ bool RobotFace::init() {
     }
 
     canvasReady = true;
-    ESP_LOGI(TAG, "Sprite initialized successfully (%u bytes).", (unsigned)canvas.bufferLength());
+    ESP_LOGI(TAG, "Sprite initialized successfully (%u bytes, %s).",
+             (unsigned)canvas.bufferLength(),
+             esp_ptr_internal(buf) ? "Internal SRAM / DMA Enabled" : "PSRAM");
 
-    // Apply neutral preset immediately
-    setEmotion(RobotEmotion::Neutral, true);
+    // Apply festive Dasara preset immediately on boot
+    setEmotion(RobotEmotion::Dasara, true);
 
     return true;
 }
@@ -332,6 +355,23 @@ void RobotFace::applyEmotionPreset(RobotEmotion emotion) {
             targetLeftBrowAngle    = 0.35f;
             targetRightBrowAngle   = -0.35f;
             targetBlushIntensity   = 0.0f;
+            isWinking              = false;
+            break;
+
+        case RobotEmotion::Dasara:
+            targetEyeWidth         = EYE_BASE_WIDTH * 0.95f;
+            targetEyeHeight        = EYE_BASE_HEIGHT * 0.85f;
+            targetEyeRadius        = EYE_BASE_RADIUS;
+            targetUpperLidOpen     = 1.0f;
+            targetLowerLidOpen     = 1.0f;
+            targetLidAngle         = 0.0f;
+            targetLeftBrowY        = 42.0f;
+            targetRightBrowY       = 42.0f;
+            targetLeftBrowAngle    = -0.06f;
+            targetRightBrowAngle   = 0.06f;
+            targetBlushIntensity   = 0.95f;
+            targetGazeX            = 0.0f;
+            targetGazeY            = 0.0f;
             isWinking              = false;
             break;
 
@@ -486,9 +526,9 @@ void RobotFace::updateAutonomousAI(float dt) {
         touchReleaseTimer -= dt;
         if (touchReleaseTimer <= 0.0f) {
             releaseTouch();
-            // Return to calm neutral state if it was petted
+            // Return to festive Dasara celebration if it was petted
             if (currentEmotion == RobotEmotion::Happy) {
-                setEmotion(RobotEmotion::Neutral, false);
+                setEmotion(RobotEmotion::Dasara, false);
             }
         }
         return; // User has control, skip autonomous drift
@@ -526,16 +566,17 @@ void RobotFace::updateAutonomousAI(float dt) {
         autoEmotionTimer = 0.0f;
         nextAutoEmotionInterval = 9.0f + (float)(rand() % 60) * 0.1f; // 9s to 15s
 
-        // Sequence of engaging personality states
+        // Sequence of engaging personality states including Happy Dasara
         static const RobotEmotion sequence[] = {
+            RobotEmotion::Dasara,
+            RobotEmotion::Happy,
             RobotEmotion::Neutral,
             RobotEmotion::Curious,
-            RobotEmotion::Neutral,
-            RobotEmotion::Happy,
+            RobotEmotion::Dasara,
             RobotEmotion::Focused,
             RobotEmotion::Neutral,
             RobotEmotion::Wink,
-            RobotEmotion::Neutral,
+            RobotEmotion::Dasara,
             RobotEmotion::Sleepy,
             RobotEmotion::Surprised
         };
@@ -653,7 +694,7 @@ void RobotFace::render() {
     }
 
     // 3. Draw Eyes
-    if (currentEmotion == RobotEmotion::Happy) {
+    if (currentEmotion == RobotEmotion::Happy || currentEmotion == RobotEmotion::Dasara) {
         drawHappyEye(effectiveLeftEyeX, effectiveLeftEyeY, true);
         drawHappyEye(effectiveRightEyeX, effectiveRightEyeY, false);
     } else if (isWinking) {
@@ -669,6 +710,11 @@ void RobotFace::render() {
     drawEyebrow(EYE_CENTER_LEFT_X + gazeX * 0.5f, leftBrowY + browBob, leftBrowAngle, 46.0f);
     drawEyebrow(EYE_CENTER_RIGHT_X + gazeX * 0.5f, rightBrowY + browBob, rightBrowAngle, 46.0f);
 
+    // 4b. Draw Auspicious Dasara Chandan & Kumkum Tilak on Forehead
+    if (currentEmotion == RobotEmotion::Dasara) {
+        drawFestiveTilak(SCREEN_WIDTH / 2.0f + gazeX * 0.35f, 44.0f + browBob);
+    }
+
     // 5. Draw Cheek Blush
     drawCheekBlush();
 
@@ -677,6 +723,19 @@ void RobotFace::render() {
 
     // 7. Draw Holographic Accents (Curious spinner, Alert !, Sleepy Z)
     drawHolographicAccents();
+
+    // 8. Draw Dasara Festive Elements
+    if (currentEmotion == RobotEmotion::Dasara) {
+        // Floating celebratory golden & vermilion sparkles
+        drawFestiveSparkles();
+
+        // Twin auspicious corner Diyas with desynchronized lifelike flickering flames
+        drawDiya(34.0f, 214.0f, 0.95f, globalTime * 4.0f);
+        drawDiya(286.0f, 214.0f, 0.95f, globalTime * 4.0f + 2.1f);
+    }
+
+    // 9. Draw Cybernetic Performance & FPS/CPU Telemetry Overlay
+    drawPerfOverlay();
 
     // Push completed frame to physical screen via high-speed SPI
     canvas.pushSprite(0, 0);
@@ -733,9 +792,15 @@ void RobotFace::drawVisorHUD() {
         case RobotEmotion::Wink:      statusStr = "LINK.SYNC";  break;
         case RobotEmotion::Sad:       statusStr = "DIAG.FAIL";  break;
         case RobotEmotion::Rage:      statusStr = "WARN.HOT";   break;
+        case RobotEmotion::Dasara:    statusStr = "HAPPY.DASARA"; break;
         default:                      statusStr = "SYS.ONLINE"; break;
     }
     canvas.drawString(statusStr, bx + 26, by + 1);
+
+    if (currentEmotion == RobotEmotion::Dasara) {
+        // Miniature glowing auspicious Diya in top-center HUD
+        drawDiya((float)(SCREEN_WIDTH / 2), (float)(by + 3), 0.55f, globalTime * 4.5f);
+    }
 
     // 2b. Cybernetic Wi-Fi / Hotspot HUD Indicator
     if (wifiEnabled) {
@@ -905,7 +970,7 @@ void RobotFace::drawEye(float cx, float cy, bool isLeft, float upperOpen, float 
 
 void RobotFace::drawHappyEye(float cx, float cy, bool isLeft) {
     // Joyful curved crescent anime/cyber arch: ^
-    constexpr int NUM_PTS = 11;
+    constexpr int NUM_PTS = 7;
     float halfW = eyeWidth * 0.44f;
     float archH = eyeHeight * 0.48f;
     float baseY = cy + archH * 0.35f;
@@ -921,22 +986,22 @@ void RobotFace::drawHappyEye(float cx, float cy, bool isLeft) {
 
     // Draw outer glow segments
     for (int i = 0; i < NUM_PTS - 1; ++i) {
-        canvas.drawWideLine(ptsX[i], ptsY[i], ptsX[i + 1], ptsY[i + 1], 10.0f, currentTheme.glow);
+        canvas.drawWideLine(ptsX[i], ptsY[i], ptsX[i + 1], ptsY[i + 1], 6.5f, currentTheme.glow);
     }
 
     // Draw main vibrant arch body
     for (int i = 0; i < NUM_PTS - 1; ++i) {
-        canvas.drawWideLine(ptsX[i], ptsY[i], ptsX[i + 1], ptsY[i + 1], 6.5f, currentTheme.primary);
+        canvas.drawWideLine(ptsX[i], ptsY[i], ptsX[i + 1], ptsY[i + 1], 4.0f, currentTheme.primary);
     }
 
     // Draw laser-white core
     for (int i = 0; i < NUM_PTS - 1; ++i) {
-        canvas.drawWideLine(ptsX[i], ptsY[i], ptsX[i + 1], ptsY[i + 1], 2.8f, currentTheme.secondary);
+        canvas.drawWideLine(ptsX[i], ptsY[i], ptsX[i + 1], ptsY[i + 1], 1.8f, currentTheme.secondary);
     }
 
     // Cheerful upturned rounded tips
-    canvas.fillSmoothCircle(ptsX[0], ptsY[0], 3.5f, currentTheme.primary);
-    canvas.fillSmoothCircle(ptsX[NUM_PTS - 1], ptsY[NUM_PTS - 1], 3.5f, currentTheme.primary);
+    canvas.fillSmoothCircle(ptsX[0], ptsY[0], 2.8f, currentTheme.primary);
+    canvas.fillSmoothCircle(ptsX[NUM_PTS - 1], ptsY[NUM_PTS - 1], 2.8f, currentTheme.primary);
 }
 
 void RobotFace::drawWinkEye(float cx, float cy, bool isLeft) {
@@ -977,20 +1042,20 @@ void RobotFace::drawEyebrow(float cx, float cy, float angle, float length) {
     float y1 = cy + halfL * sinA;
 
     // Outer glow
-    canvas.drawWideLine(x0, y0, x1, y1, 7.5f, currentTheme.glow);
+    canvas.drawWideLine(x0, y0, x1, y1, 5.5f, currentTheme.glow);
     // Main brow body
-    canvas.drawWideLine(x0, y0, x1, y1, 5.0f, currentTheme.primary);
+    canvas.drawWideLine(x0, y0, x1, y1, 3.5f, currentTheme.primary);
     // Bright core
-    canvas.drawWideLine(x0, y0, x1, y1, 2.0f, currentTheme.secondary);
+    canvas.drawWideLine(x0, y0, x1, y1, 1.5f, currentTheme.secondary);
 }
 
 void RobotFace::drawMouth() {
     constexpr int32_t MCX = SCREEN_WIDTH / 2;
     constexpr int32_t MCY = 192;
 
-    if (currentEmotion == RobotEmotion::Happy || isBeingPetted) {
+    if (currentEmotion == RobotEmotion::Happy || currentEmotion == RobotEmotion::Dasara || isBeingPetted) {
         // Glowing curved smile
-        constexpr int NUM_SMILE_PTS = 9;
+        constexpr int NUM_SMILE_PTS = 6;
         float halfW = 28.0f;
         float smileH = 14.0f;
         float ptsX[NUM_SMILE_PTS];
@@ -1003,14 +1068,14 @@ void RobotFace::drawMouth() {
         }
 
         for (int i = 0; i < NUM_SMILE_PTS - 1; ++i) {
-            canvas.drawWideLine(ptsX[i], ptsY[i], ptsX[i + 1], ptsY[i + 1], 6.0f, currentTheme.glow);
-            canvas.drawWideLine(ptsX[i], ptsY[i], ptsX[i + 1], ptsY[i + 1], 4.0f, currentTheme.primary);
-            canvas.drawWideLine(ptsX[i], ptsY[i], ptsX[i + 1], ptsY[i + 1], 1.8f, currentTheme.secondary);
+            canvas.drawWideLine(ptsX[i], ptsY[i], ptsX[i + 1], ptsY[i + 1], 5.0f, currentTheme.glow);
+            canvas.drawWideLine(ptsX[i], ptsY[i], ptsX[i + 1], ptsY[i + 1], 3.0f, currentTheme.primary);
+            canvas.drawWideLine(ptsX[i], ptsY[i], ptsX[i + 1], ptsY[i + 1], 1.4f, currentTheme.secondary);
         }
 
         // Cute dimple dots at smile ends
-        canvas.fillSmoothCircle(ptsX[0], ptsY[0], 2.5f, currentTheme.accent);
-        canvas.fillSmoothCircle(ptsX[NUM_SMILE_PTS - 1], ptsY[NUM_SMILE_PTS - 1], 2.5f, currentTheme.accent);
+        canvas.fillSmoothCircle(ptsX[0], ptsY[0], 2.2f, currentTheme.accent);
+        canvas.fillSmoothCircle(ptsX[NUM_SMILE_PTS - 1], ptsY[NUM_SMILE_PTS - 1], 2.2f, currentTheme.accent);
     } else if (currentEmotion == RobotEmotion::Surprised) {
         // Surprised 'O' aperture
         canvas.drawEllipse(MCX, MCY, 10, 14, currentTheme.glow);
@@ -1018,20 +1083,19 @@ void RobotFace::drawMouth() {
         canvas.drawEllipse(MCX, MCY, 7, 11, currentTheme.secondary);
         canvas.fillEllipse(MCX, MCY, 5, 9, currentTheme.bg);
     } else {
-        // 9-Bar Animated Voice Synthesizer Waveform
+        // 9-Bar Animated Voice Synthesizer Waveform (Fast rectilinear fill)
         for (int i = 0; i < 9; ++i) {
             int32_t barX = MCX + (i - 4) * 8;
-            float h = voiceHeights[i];
-            float topY = (float)MCY - h / 2.0f;
-            float botY = (float)MCY + h / 2.0f;
+            int32_t h = (int32_t)voiceHeights[i];
+            int32_t topY = MCY - h / 2;
 
-            // Bar halo
-            canvas.drawWideLine((float)barX, topY, (float)barX, botY, 4.0f, currentTheme.glow);
-            // Main bar
-            canvas.drawWideLine((float)barX, topY, (float)barX, botY, 2.5f, currentTheme.primary);
+            // Bar halo (width 4)
+            canvas.fillRect(barX - 2, topY - 1, 4, h + 2, currentTheme.glow);
+            // Main bar (width 2)
+            canvas.fillRect(barX - 1, topY, 2, h, currentTheme.primary);
             // Tip caps
-            canvas.fillCircle(barX, (int32_t)topY, 1, currentTheme.secondary);
-            canvas.fillCircle(barX, (int32_t)botY, 1, currentTheme.secondary);
+            canvas.fillRect(barX - 1, topY, 2, 1, currentTheme.secondary);
+            canvas.fillRect(barX - 1, topY + h - 1, 2, 1, currentTheme.secondary);
         }
     }
 }
@@ -1091,5 +1155,340 @@ void RobotFace::drawHolographicAccents() {
         float scanY = EYE_NOMINAL_Y + sinf(globalTime * 5.0f) * 16.0f;
         canvas.drawFastHLine(60, (int32_t)scanY, 200, currentTheme.glow);
         canvas.drawPixel(160, (int32_t)scanY, currentTheme.accent);
+    }
+}
+
+void RobotFace::drawFestiveTilak(float cx, float cy) {
+    // Sacred Chandan & Kumkum Tilak on Forehead between Eyebrows
+    // 1. Soft ambient golden aura
+    canvas.fillSmoothCircle((int32_t)cx, (int32_t)(cy + 2.0f), 10, currentTheme.glow);
+
+    // 2. Sandalwood (Chandan) U-pundra crescent curve
+    // Left vertical arm
+    canvas.drawWideLine(cx - 5.5f, cy - 9.0f, cx - 5.5f, cy + 1.0f, 2.8f, currentTheme.primary);
+    // Right vertical arm
+    canvas.drawWideLine(cx + 5.5f, cy - 9.0f, cx + 5.5f, cy + 1.0f, 2.8f, currentTheme.primary);
+    // Bottom connector curve
+    canvas.drawWideLine(cx - 5.5f, cy + 1.0f, cx, cy + 6.0f, 2.8f, currentTheme.primary);
+    canvas.drawWideLine(cx + 5.5f, cy + 1.0f, cx, cy + 6.0f, 2.8f, currentTheme.primary);
+
+    // Luminous core highlights
+    canvas.drawWideLine(cx - 5.5f, cy - 8.0f, cx - 5.5f, cy + 1.0f, 1.2f, currentTheme.secondary);
+    canvas.drawWideLine(cx + 5.5f, cy - 8.0f, cx + 5.5f, cy + 1.0f, 1.2f, currentTheme.secondary);
+    canvas.drawWideLine(cx - 5.5f, cy + 1.0f, cx, cy + 5.5f, 1.2f, currentTheme.secondary);
+    canvas.drawWideLine(cx + 5.5f, cy + 1.0f, cx, cy + 5.5f, 1.2f, currentTheme.secondary);
+
+    // Upturned tips
+    canvas.fillSmoothCircle(cx - 5.5f, cy - 9.0f, 1.6f, currentTheme.secondary);
+    canvas.fillSmoothCircle(cx + 5.5f, cy - 9.0f, 1.6f, currentTheme.secondary);
+
+    // 3. Central Kumkum (Vermilion) Bindu & vertical flame streak
+    float kumkumY = cy - 2.0f;
+    canvas.fillSmoothCircle((int32_t)cx, (int32_t)kumkumY, 4, 0x8000); // Shadow outline
+    canvas.fillSmoothCircle((int32_t)cx, (int32_t)kumkumY, 3, currentTheme.accent); // Kumkum red
+    canvas.drawWideLine(cx, kumkumY - 5.0f, cx, kumkumY + 2.0f, 2.0f, currentTheme.accent);
+    canvas.fillSmoothCircle((int32_t)(cx - 0.7f), (int32_t)(kumkumY - 1.0f), 1.0f, TFT_WHITE); // Divine glint
+}
+
+void RobotFace::drawDiya(float x, float y, float scale, float flamePhase) {
+    // Traditional Clay / Brass Diya with animated flickering flame (Jyoti)
+    // 1. Ambient flame glow bloom
+    float pulse = 0.5f + 0.5f * sinf(flamePhase * 3.0f);
+    float bloomR = (16.0f + 3.0f * pulse) * scale;
+    canvas.fillSmoothCircle((int32_t)x, (int32_t)(y - 6.0f * scale), (int32_t)bloomR, 0x4100);
+    canvas.fillSmoothCircle((int32_t)x, (int32_t)(y - 6.0f * scale), (int32_t)(bloomR * 0.65f), 0x7200);
+
+    // 2. Terracotta / Brass Diya base
+    // Lower bowl
+    canvas.fillSmoothRoundRect((int32_t)(x - 14.0f * scale), (int32_t)y,
+                               (int32_t)(28.0f * scale), (int32_t)(10.0f * scale),
+                               (int32_t)(4.0f * scale), 0xB2A0);
+    // Base pedestal
+    canvas.fillEllipse((int32_t)x, (int32_t)(y + 8.0f * scale),
+                       (int32_t)(9.0f * scale), (int32_t)(4.0f * scale), 0x8180);
+
+    // Gold decorative lip / rim
+    canvas.drawWideLine(x - 15.0f * scale, y, x + 15.0f * scale, y, 2.5f * scale, 0xFDC0);
+    canvas.drawWideLine(x - 13.0f * scale, y - 0.5f * scale, x + 13.0f * scale, y - 0.5f * scale, 1.2f * scale, 0xFFFF);
+
+    // Oil reservoir
+    canvas.fillEllipse((int32_t)x, (int32_t)(y + 2.0f * scale),
+                       (int32_t)(10.0f * scale), (int32_t)(3.0f * scale), 0x91A0);
+    canvas.drawFastHLine((int32_t)(x - 5.0f * scale), (int32_t)(y + 2.0f * scale),
+                         (int32_t)(10.0f * scale), 0xFE20);
+
+    // 3. Cotton Wick (Batti)
+    canvas.drawWideLine(x, y + 2.0f * scale, x, y - 2.0f * scale, 1.5f * scale, 0x2940);
+
+    // 4. Animated Flickering Flame (Jyoti)
+    float sway = sinf(flamePhase * 3.5f) * 1.6f * scale;
+    float flickH = (14.0f + 2.5f * sinf(flamePhase * 4.2f) + 1.2f * cosf(flamePhase * 6.8f)) * scale;
+    float tipX = x + sway;
+    float tipY = y - flickH;
+    float midY = y - flickH * 0.45f;
+    float flameHalfW = (5.5f + 0.8f * cosf(flamePhase * 3.8f)) * scale;
+
+    // Outer Saffron / Orange flame
+    canvas.fillTriangle((int32_t)(x - flameHalfW), (int32_t)midY,
+                        (int32_t)(x + flameHalfW), (int32_t)midY,
+                        (int32_t)tipX, (int32_t)tipY,
+                        0xFD20);
+    canvas.fillEllipse((int32_t)x, (int32_t)midY, (int32_t)flameHalfW, (int32_t)(flameHalfW * 1.1f), 0xFD20);
+
+    // Inner bright Marigold Yellow flame
+    float innerW = flameHalfW * 0.65f;
+    float innerTipY = tipY + 3.0f * scale;
+    canvas.fillTriangle((int32_t)(x - innerW), (int32_t)midY,
+                        (int32_t)(x + innerW), (int32_t)midY,
+                        (int32_t)(tipX * 0.7f + x * 0.3f), (int32_t)innerTipY,
+                        0xFFE0);
+    canvas.fillEllipse((int32_t)x, (int32_t)midY, (int32_t)innerW, (int32_t)(innerW * 1.0f), 0xFFE0);
+
+    // White-hot flame core
+    canvas.fillSmoothCircle((int32_t)x, (int32_t)(midY + 1.0f * scale), (int32_t)(2.2f * scale), TFT_WHITE);
+    canvas.drawWideLine(x, midY + 1.0f * scale, tipX * 0.5f + x * 0.5f, innerTipY + 2.0f * scale, 1.4f * scale, TFT_WHITE);
+}
+
+void RobotFace::drawFestiveSparkles() {
+    // 6 Procedural celebratory sparkling particles drifting upwards
+    struct SparkleItem {
+        float x;
+        float speedY;
+        float swayFreq;
+        float swayAmp;
+        float timeOffset;
+        uint16_t color;
+    };
+
+    static const SparkleItem SPARKLES[] = {
+        { 45.0f,  24.0f, 2.1f,  9.0f,  0.0f, 0xFE20 }, // Saffron Gold
+        { 82.0f,  19.0f, 2.7f, 11.0f,  1.8f, 0xFFFF }, // White Star
+        { 135.0f, 22.0f, 1.8f, 14.0f,  3.5f, 0xF800 }, // Kumkum Red
+        { 185.0f, 20.0f, 2.4f, 12.0f,  0.9f, 0xFE20 }, // Saffron Gold
+        { 238.0f, 25.0f, 1.9f, 10.0f,  2.7f, 0xFFFF }, // White Star
+        { 275.0f, 21.0f, 2.5f,  8.0f,  4.2f, 0xF800 }  // Kumkum Red
+    };
+
+    for (const auto& sp : SPARKLES) {
+        float elapsed = globalTime + sp.timeOffset;
+        float yDist = fmodf(elapsed * sp.speedY, 190.0f);
+        float py = 215.0f - yDist;
+        float px = sp.x + sinf(elapsed * sp.swayFreq) * sp.swayAmp;
+
+        // Twinkle factor
+        float twinkle = 0.5f + 0.5f * sinf(elapsed * 7.5f);
+        if (twinkle < 0.25f) continue;
+
+        float len = 2.0f + 3.0f * twinkle;
+
+        // 4-point diamond starburst
+        canvas.drawFastHLine((int32_t)(px - len), (int32_t)py, (int32_t)(len * 2.0f + 1), sp.color);
+        canvas.drawFastVLine((int32_t)px, (int32_t)(py - len), (int32_t)(len * 2.0f + 1), sp.color);
+        canvas.drawPixel((int32_t)px, (int32_t)py, TFT_WHITE);
+    }
+}
+
+void RobotFace::setPerfStats(float fps, float cpuCore1, float cpuCore2, float cpuTotal, uint32_t freeHeap) {
+    perfFps = fps;
+    perfCpuCore1 = cpuCore1;
+    perfCpuCore2 = cpuCore2;
+    perfCpuTotal = (cpuTotal >= 0.0f) ? cpuTotal : ((cpuCore1 + cpuCore2) * 0.5f);
+    perfFreeHeap = freeHeap;
+}
+
+void RobotFace::cyclePerfOverlayMode() {
+    int next = ((int)perfMode + 1) % (int)PerfOverlayMode::COUNT;
+    perfMode = (PerfOverlayMode)next;
+}
+
+bool RobotFace::isTouchOnOverlay(int32_t x, int32_t y) const {
+    if (perfMode == PerfOverlayMode::Off) {
+        // Invisible touch target at bottom center to re-enable overlay
+        constexpr int32_t HZ_W = 120, HZ_H = 24;
+        int32_t hx = (SCREEN_WIDTH - HZ_W) / 2;
+        int32_t hy = SCREEN_HEIGHT - HZ_H;
+        return (x >= hx && x <= hx + HZ_W && y >= hy && y <= SCREEN_HEIGHT);
+    }
+    // Generous touch tolerance (+10px horizontal, +8px vertical padding around badge)
+    return (x >= (overlayX - 10) && x <= (overlayX + overlayW + 10) &&
+            y >= (overlayY - 8) && y <= (overlayY + overlayH + 8));
+}
+
+void RobotFace::drawPerfOverlay() {
+    if (perfMode == PerfOverlayMode::Off) {
+        overlayW = 0;
+        overlayH = 0;
+        return;
+    }
+
+    int32_t w = 0, h = 14;
+    switch (perfMode) {
+        case PerfOverlayMode::Compact:
+            w = 120;
+            break;
+        case PerfOverlayMode::Detailed:
+            w = 168;
+            break;
+        case PerfOverlayMode::Minimal:
+            w = 98;
+            h = 13;
+            break;
+        default:
+            return;
+    }
+
+    int32_t x = 0, y = 0;
+    switch (perfPos) {
+        case PerfOverlayPosition::BottomCenter:
+            x = (SCREEN_WIDTH - w) / 2;
+            y = SCREEN_HEIGHT - h - 3;
+            break;
+        case PerfOverlayPosition::TopCenter:
+            x = (SCREEN_WIDTH - w) / 2;
+            y = 12;
+            break;
+        case PerfOverlayPosition::TopRight:
+            x = SCREEN_WIDTH - w - 8;
+            y = 12;
+            break;
+        case PerfOverlayPosition::BottomRight:
+            x = SCREEN_WIDTH - w - 8;
+            y = SCREEN_HEIGHT - h - 3;
+            break;
+    }
+
+    overlayX = x;
+    overlayY = y;
+    overlayW = w;
+    overlayH = h;
+
+    // 1. Draw Slim Glassmorphic Capsule
+    canvas.fillRoundRect(x, y, w, h, 3, currentTheme.bg);
+    canvas.drawRoundRect(x, y, w, h, 3, currentTheme.glow);
+
+    // Micro corner ticks
+    canvas.drawPixel(x + 1, y + 1, currentTheme.primary);
+    canvas.drawPixel(x + w - 2, y + 1, currentTheme.primary);
+    canvas.drawPixel(x + 1, y + h - 2, currentTheme.primary);
+    canvas.drawPixel(x + w - 2, y + h - 2, currentTheme.primary);
+
+    canvas.setTextSize(1);
+
+    // Dynamic FPS color alert
+    uint16_t fpsCol = (perfFps >= 50.0f) ? currentTheme.secondary :
+                      (perfFps >= 30.0f) ? (uint16_t)0xFDE0 : (uint16_t)0xFA00;
+
+    // Dynamic Core 1 & Core 2 load color alert
+    uint16_t c1Col = (perfCpuCore1 < 50.0f) ? currentTheme.secondary :
+                     (perfCpuCore1 < 80.0f) ? (uint16_t)0xFDE0 : (uint16_t)0xFA00;
+    uint16_t c2Col = (perfCpuCore2 < 50.0f) ? currentTheme.secondary :
+                     (perfCpuCore2 < 80.0f) ? (uint16_t)0xFDE0 : (uint16_t)0xFA00;
+
+    if (perfMode == PerfOverlayMode::Compact) {
+        // [ 60fps │ C1 12% │ C2 34% ● ] (Ultra-compact 120x14 px)
+        // FPS section
+        char fpsVal[16];
+        snprintf(fpsVal, sizeof(fpsVal), "%2.0f", perfFps);
+        canvas.setTextColor(fpsCol, currentTheme.bg);
+        canvas.drawString(fpsVal, x + 5, y + 3);
+
+        canvas.setTextColor(currentTheme.primary, currentTheme.bg);
+        canvas.drawString("f", x + 18, y + 3);
+
+        // Divider 1
+        canvas.drawFastVLine(x + 28, y + 2, h - 4, currentTheme.glow);
+        canvas.drawPixel(x + 28, y + h / 2, currentTheme.primary);
+
+        // Core 1 section
+        canvas.setTextColor(currentTheme.primary, currentTheme.bg);
+        canvas.drawString("C1", x + 33, y + 3);
+
+        char c1Str[16];
+        snprintf(c1Str, sizeof(c1Str), "%2.0f%%", (perfCpuCore1 < 0.0f) ? 0.0f : perfCpuCore1);
+        canvas.setTextColor(c1Col, currentTheme.bg);
+        canvas.drawString(c1Str, x + 47, y + 3);
+
+        // Divider 2
+        canvas.drawFastVLine(x + 69, y + 2, h - 4, currentTheme.glow);
+        canvas.drawPixel(x + 69, y + h / 2, currentTheme.primary);
+
+        // Core 2 section
+        canvas.setTextColor(currentTheme.primary, currentTheme.bg);
+        canvas.drawString("C2", x + 74, y + 3);
+
+        char c2Str[16];
+        snprintf(c2Str, sizeof(c2Str), "%2.0f%%", (perfCpuCore2 < 0.0f) ? 0.0f : perfCpuCore2);
+        canvas.setTextColor(c2Col, currentTheme.bg);
+        canvas.drawString(c2Str, x + 88, y + 3);
+
+        // Micro activity pulse dot
+        float pulse = fmodf(globalTime * 3.0f, 1.0f);
+        uint16_t pipCol = (pulse < 0.35f) ? currentTheme.secondary : currentTheme.glow;
+        canvas.drawPixel(x + 112, y + h / 2, pipCol);
+
+    } else if (perfMode == PerfOverlayMode::Detailed) {
+        // [ 60fps │ C1 12% │ C2 34% │ 284K ] (168x14 px)
+        char fpsVal[16];
+        snprintf(fpsVal, sizeof(fpsVal), "%2.0f", perfFps);
+        canvas.setTextColor(fpsCol, currentTheme.bg);
+        canvas.drawString(fpsVal, x + 5, y + 3);
+        canvas.setTextColor(currentTheme.primary, currentTheme.bg);
+        canvas.drawString("fps", x + 18, y + 3);
+
+        canvas.drawFastVLine(x + 39, y + 2, h - 4, currentTheme.glow);
+
+        canvas.setTextColor(currentTheme.primary, currentTheme.bg);
+        canvas.drawString("C1", x + 44, y + 3);
+        char c1Str[16];
+        snprintf(c1Str, sizeof(c1Str), "%2.0f%%", (perfCpuCore1 < 0.0f) ? 0.0f : perfCpuCore1);
+        canvas.setTextColor(c1Col, currentTheme.bg);
+        canvas.drawString(c1Str, x + 58, y + 3);
+
+        canvas.drawFastVLine(x + 80, y + 2, h - 4, currentTheme.glow);
+
+        canvas.setTextColor(currentTheme.primary, currentTheme.bg);
+        canvas.drawString("C2", x + 85, y + 3);
+        char c2Str[16];
+        snprintf(c2Str, sizeof(c2Str), "%2.0f%%", (perfCpuCore2 < 0.0f) ? 0.0f : perfCpuCore2);
+        canvas.setTextColor(c2Col, currentTheme.bg);
+        canvas.drawString(c2Str, x + 99, y + 3);
+
+        canvas.drawFastVLine(x + 121, y + 2, h - 4, currentTheme.glow);
+
+        canvas.setTextColor(currentTheme.primary, currentTheme.bg);
+        canvas.drawString("M", x + 126, y + 3);
+        char memStr[16];
+        snprintf(memStr, sizeof(memStr), "%3uK", (unsigned int)(perfFreeHeap / 1024));
+        canvas.setTextColor(currentTheme.secondary, currentTheme.bg);
+        canvas.drawString(memStr, x + 134, y + 3);
+
+        float pulse = fmodf(globalTime * 3.0f, 1.0f);
+        uint16_t pipCol = (pulse < 0.35f) ? currentTheme.secondary : currentTheme.glow;
+        canvas.drawPixel(x + w - 6, y + h / 2, pipCol);
+
+    } else if (perfMode == PerfOverlayMode::Minimal) {
+        // [ 60f · 12% · 34% ] (98x13 px)
+        char fpsStr[16];
+        snprintf(fpsStr, sizeof(fpsStr), "%2.0ff", perfFps);
+        canvas.setTextColor(fpsCol, currentTheme.bg);
+        canvas.drawString(fpsStr, x + 5, y + 3);
+
+        canvas.fillCircle(x + 28, y + h / 2, 1, currentTheme.glow);
+
+        char c1Str[16];
+        snprintf(c1Str, sizeof(c1Str), "%2.0f%%", (perfCpuCore1 < 0.0f) ? 0.0f : perfCpuCore1);
+        canvas.setTextColor(c1Col, currentTheme.bg);
+        canvas.drawString(c1Str, x + 34, y + 3);
+
+        canvas.fillCircle(x + 59, y + h / 2, 1, currentTheme.glow);
+
+        char c2Str[16];
+        snprintf(c2Str, sizeof(c2Str), "%2.0f%%", (perfCpuCore2 < 0.0f) ? 0.0f : perfCpuCore2);
+        canvas.setTextColor(c2Col, currentTheme.bg);
+        canvas.drawString(c2Str, x + 65, y + 3);
+
+        float pulse = fmodf(globalTime * 3.0f, 1.0f);
+        uint16_t pipCol = (pulse < 0.35f) ? currentTheme.secondary : currentTheme.glow;
+        canvas.drawPixel(x + w - 6, y + h / 2, pipCol);
     }
 }

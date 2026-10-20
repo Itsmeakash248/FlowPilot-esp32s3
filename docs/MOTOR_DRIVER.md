@@ -149,6 +149,33 @@ To avoid brownouts when motors start abruptly under load, `MotorDriver` includes
   motor.setSlewRate(1.5f); // Gentle, high-inertia acceleration (0 to 100% in 667ms)
   ```
 
+### 7. Dual Motor Diagnostic Test Suite
+To verify wiring polarity, channel separation, and H-bridge operation, FlowPilot provides an automated hardware test suite running on Core 0:
+
+```cpp
+#include "MotorTest.hpp"
+
+// Start the automated test sequence (runs on Core 0 with priority 3)
+startMotorTestTask();
+
+// Or run with custom parameters:
+MotorTestConfig testCfg;
+testCfg.continuousLoop = false;     // Run single cycle and stop
+testCfg.testSpeed = 0.40f;          // 40% speed
+testCfg.stepDurationMs = 1500;      // 1.5s per step
+startMotorTestTask(testCfg);
+
+// To stop the test and brake immediately:
+stopMotorTestTask();
+```
+
+The test systematically exercises:
+1. **Motor A (Left) Isolated**: Forward (GPIO 15 PWM) -> Coast Stop -> Reverse (GPIO 16 PWM) -> Active Dynamic Brake.
+2. **Motor B (Right) Isolated**: Forward (GPIO 18 PWM) -> Coast Stop -> Reverse (GPIO 17 PWM) -> Active Dynamic Brake.
+3. **Dual Motors Synchronized**: Straight forward drive -> Electric brake -> Straight reverse -> Electric brake.
+4. **Skid-Steer / Pivot**: In-place counter-clockwise spin (spinLeft) -> in-place clockwise spin (spinRight).
+5. **Soft-Start Slew Ramp**: 0% -> 60% -> 0% acceleration ramp testing brownout prevention and current limiter.
+
 ---
 
 ## 5. Troubleshooting & Diagnostics

@@ -15,7 +15,7 @@ RgbLed::RgbLed()
     , isInitialized(false)
     , gpioPin(DEFAULT_GPIO_PIN)
     , currentMode(RgbLedMode::EmotionSync)
-    , maxBrightness(DEFAULT_BRIGHTNESS)
+    , maxBrightness(std::min(DEFAULT_BRIGHTNESS, MAX_BRIGHTNESS_LIMIT))
     , activeR(0), activeG(212), activeB(255)       // Default Cyber Cyan
     , targetR(0), targetG(212), targetB(255)
     , animTime(0.0f)
@@ -69,8 +69,8 @@ esp_err_t RgbLed::init(gpio_num_t pin) {
     isInitialized = true;
     clear();
 
-    ESP_LOGI(TAG, "Built-in WS2812 RGB LED initialized successfully on GPIO %d (Brightness: %u/255)",
-             pin, maxBrightness);
+    ESP_LOGI(TAG, "Built-in WS2812 RGB LED initialized successfully on GPIO %d (Brightness: %u/255, Limit: %u/255 [20%%])",
+             pin, maxBrightness, MAX_BRIGHTNESS_LIMIT);
     return ESP_OK;
 }
 
@@ -109,7 +109,25 @@ void RgbLed::setHsv(uint16_t hue, uint8_t sat, uint8_t val) {
 }
 
 void RgbLed::setBrightness(uint8_t brightness) {
+    if (brightness > MAX_BRIGHTNESS_LIMIT) {
+        ESP_LOGW(TAG, "Requested brightness %u exceeds safety limit of %u (20%% max). Clamping.",
+                 brightness, MAX_BRIGHTNESS_LIMIT);
+        brightness = MAX_BRIGHTNESS_LIMIT;
+    }
     maxBrightness = brightness;
+}
+
+void RgbLed::setBrightnessPercent(float percent) {
+    if (percent < 0.0f) {
+        percent = 0.0f;
+    }
+    const float maxPercent = ((float)MAX_BRIGHTNESS_LIMIT / 255.0f) * 100.0f; // 20.0% limit
+    if (percent > maxPercent) {
+        ESP_LOGW(TAG, "Requested brightness %.1f%% exceeds safety limit of %.1f%% (20%% max). Clamping.",
+                 percent, maxPercent);
+        percent = maxPercent;
+    }
+    setBrightness((uint8_t)std::round((percent / 100.0f) * 255.0f));
 }
 
 void RgbLed::clear() {
@@ -120,10 +138,18 @@ void RgbLed::clear() {
 void RgbLed::applyHardwareColor(uint8_t r, uint8_t g, uint8_t b) {
     if (!isInitialized || !ledStripHandle) return;
 
+    // Ensure effective brightness is strictly clamped to 20% (max 51/255)
+    uint8_t effectiveBrightness = std::min(maxBrightness, MAX_BRIGHTNESS_LIMIT);
+
     // Apply global brightness scaling
-    uint32_t finalR = ((uint32_t)r * maxBrightness) / 255;
-    uint32_t finalG = ((uint32_t)g * maxBrightness) / 255;
-    uint32_t finalB = ((uint32_t)b * maxBrightness) / 255;
+    uint32_t finalR = ((uint32_t)r * effectiveBrightness) / 255;
+    uint32_t finalG = ((uint32_t)g * effectiveBrightness) / 255;
+    uint32_t finalB = ((uint32_t)b * effectiveBrightness) / 255;
+
+    // Defense-in-depth: guarantee each channel never exceeds the under-50% threshold
+    finalR = std::min<uint32_t>(finalR, MAX_BRIGHTNESS_LIMIT);
+    finalG = std::min<uint32_t>(finalG, MAX_BRIGHTNESS_LIMIT);
+    finalB = std::min<uint32_t>(finalB, MAX_BRIGHTNESS_LIMIT);
 
     led_strip_set_pixel(ledStripHandle, 0, finalR, finalG, finalB);
     led_strip_refresh(ledStripHandle);
@@ -154,6 +180,9 @@ void RgbLed::getEmotionBaseColor(RobotEmotion emotion, uint8_t& r, uint8_t& g, u
             break;
         case RobotEmotion::Rage:
             r = 255; g = 26;  b = 26;  // Fiery Crimson Red
+            break;
+        case RobotEmotion::Dasara:
+            r = 255; g = 130; b = 0;   // Royal Festive Saffron / Marigold Gold
             break;
         case RobotEmotion::Neutral:
         default:
@@ -288,6 +317,14 @@ void RgbLed::update(float dt) {
                     // Uplifting rhythmic pulse
                     float pulse = (std::sin(faceBreathPhase * 1.5f) + 1.0f) * 0.5f;
                     intensity = 0.25f + 0.75f * pulse;
+                    break;
+                }
+                case RobotEmotion::Dasara: {
+                    // Authentic Diya (oil lamp) flame flicker: warm golden breath + natural flame flicker modulation
+                    float breath = (std::sin(faceBreathPhase * 1.2f) + 1.0f) * 0.5f;
+                    float flicker = 0.82f + 0.12f * std::sin(animTime * 14.5f) + 0.06f * std::cos(animTime * 23.3f);
+                    intensity = (0.35f + 0.65f * breath) * flicker;
+                    intensity = std::clamp(intensity, 0.20f, 1.0f);
                     break;
                 }
                 case RobotEmotion::Curious:

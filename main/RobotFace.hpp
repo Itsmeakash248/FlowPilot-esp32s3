@@ -17,6 +17,7 @@ enum class RobotEmotion {
     Wink,        //< Playful wink with starburst sparkle
     Sad,         //< Drooping outer lids, low brows, soft melancholy blue
     Rage,        //< Fiery crimson eyes, intense downward slant, fast pulse
+    Dasara,      ///< Festive Dasara edition: Chandan/Kumkum tilak, flickering Diya, golden eyes & sparkles
     COUNT
 };
 
@@ -29,6 +30,27 @@ struct RobotTheme {
     uint16_t glow;        ///< Soft ambient halo / bloom
     uint16_t accent;      ///< Secondary details (blush, holographic icons)
     uint16_t bg;          ///< Obsidian visor background
+};
+
+/**
+ * @brief Telemetry overlay display modes
+ */
+enum class PerfOverlayMode {
+    Off,       ///< Overlay hidden
+    Compact,   ///< Compact badge: "FPS 60.0 | CPU 24% [==  ]"
+    Detailed,  ///< Detailed dual-core badge: "FPS 60.0 | C0: 18% C1: 30% | HEAP 280K"
+    Minimal,   ///< Minimalist badge: "60.0 FPS · 24%"
+    COUNT
+};
+
+/**
+ * @brief Telemetry overlay screen placement
+ */
+enum class PerfOverlayPosition {
+    BottomCenter, ///< Centered at bottom (default, fits between Diyas)
+    TopCenter,    ///< Centered along top HUD bar
+    TopRight,     ///< Docked at top-right
+    BottomRight   ///< Docked at bottom-right
 };
 
 /**
@@ -49,6 +71,18 @@ public:
     const RobotTheme& getTheme() const { return currentTheme; }
     float getBreathPhase() const { return breathPhase; }
     void nextEmotion();
+
+    // Performance telemetry overlay controls (Core 1 & Core 2 separate telemetry)
+    void setPerfStats(float fps, float cpuCore1, float cpuCore2, float cpuTotal = -1.0f, uint32_t freeHeap = 0);
+    float getFps() const { return perfFps; }
+    float getCpuCore1() const { return perfCpuCore1; }
+    float getCpuCore2() const { return perfCpuCore2; }
+    float getCpuTotal() const { return perfCpuTotal; }
+    void setPerfOverlayMode(PerfOverlayMode mode) { perfMode = mode; }
+    PerfOverlayMode getPerfOverlayMode() const { return perfMode; }
+    void cyclePerfOverlayMode();
+    void setPerfOverlayPosition(PerfOverlayPosition pos) { perfPos = pos; }
+    bool isTouchOnOverlay(int32_t x, int32_t y) const;
 
     // User interaction
     void handleTouch(int32_t x, int32_t y);
@@ -153,6 +187,25 @@ private:
     void drawMouth();
     void drawCheekBlush();
     void drawHolographicAccents();
+
+    // Dasara festive drawing methods
+    void drawFestiveTilak(float cx, float cy);
+    void drawDiya(float x, float y, float scale, float flamePhase);
+    void drawFestiveSparkles();
+
+    // Performance Telemetry Overlay (Core 1 & Core 2 separate telemetry)
+    float perfFps;
+    float perfCpuCore1;
+    float perfCpuCore2;
+    float perfCpuTotal;
+    uint32_t perfFreeHeap;
+    PerfOverlayMode perfMode;
+    PerfOverlayPosition perfPos;
+    int32_t overlayX;
+    int32_t overlayY;
+    int32_t overlayW;
+    int32_t overlayH;
+    void drawPerfOverlay();
 
     // Color helpers
     static RobotTheme getEmotionTheme(RobotEmotion emotion);
