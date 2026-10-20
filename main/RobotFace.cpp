@@ -167,11 +167,6 @@ RobotFace::RobotFace(LGFX& disp)
     , bounceOffset(0.0f)
     , voicePhase(0.0f)
     , blushIntensity(0.0f), targetBlushIntensity(0.0f)
-    , wifiEnabled(false)
-    , wifiIsAp(false)
-    , wifiConnected(false)
-    , wifiRssi(0)
-    , wifiClientCount(0)
     , sdCardMounted(false)
     , perfFps(60.0f)
     , perfCpuCore1(0.0f)
@@ -423,14 +418,6 @@ void RobotFace::nextEmotion() {
 void RobotFace::setLookAt(float normX, float normY) {
     targetGazeX = std::max(-26.0f, std::min(26.0f, normX * 26.0f));
     targetGazeY = std::max(-20.0f, std::min(20.0f, normY * 20.0f));
-}
-
-void RobotFace::setWifiStatus(bool enabled, bool isAp, bool isConnected, int8_t rssi, uint8_t clientCount) {
-    wifiEnabled = enabled;
-    wifiIsAp = isAp;
-    wifiConnected = isConnected;
-    wifiRssi = rssi;
-    wifiClientCount = clientCount;
 }
 
 void RobotFace::setSdCardStatus(bool mounted) {
@@ -800,48 +787,6 @@ void RobotFace::drawVisorHUD() {
     if (currentEmotion == RobotEmotion::Dasara) {
         // Miniature glowing auspicious Diya in top-center HUD
         drawDiya((float)(SCREEN_WIDTH / 2), (float)(by + 3), 0.55f, globalTime * 4.5f);
-    }
-
-    // 2b. Cybernetic Wi-Fi / Hotspot HUD Indicator
-    if (wifiEnabled) {
-        constexpr int32_t wx = 122, wy = by;
-        if (wifiIsAp) {
-            // Hotspot mode: "AP" + broadcast radiation rings
-            canvas.setTextSize(1);
-            canvas.setTextColor(currentTheme.accent, currentTheme.bg);
-            canvas.drawString("AP", wx, wy + 1);
-
-            int32_t cx = wx + 18, cy = wy + 4;
-            canvas.drawCircle(cx, cy, 2, currentTheme.primary);
-            canvas.drawCircle(cx, cy, 5, currentTheme.glow);
-
-            if (wifiClientCount > 0) {
-                char clientStr[8];
-                snprintf(clientStr, sizeof(clientStr), ":%u", (unsigned int)wifiClientCount);
-                canvas.setTextColor(currentTheme.secondary, currentTheme.bg);
-                canvas.drawString(clientStr, cx + 8, wy + 1);
-            }
-        } else if (wifiConnected) {
-            // Station mode: 3-bar signal strength graph
-            constexpr int32_t sx = wx;
-            uint16_t col1 = (wifiRssi >= -85) ? currentTheme.accent : currentTheme.glow;
-            uint16_t col2 = (wifiRssi >= -70) ? currentTheme.accent : currentTheme.glow;
-            uint16_t col3 = (wifiRssi >= -55) ? currentTheme.accent : currentTheme.glow;
-
-            canvas.fillRect(sx,     wy + 6, 2, 3, col1);
-            canvas.fillRect(sx + 4, wy + 4, 2, 5, col2);
-            canvas.fillRect(sx + 8, wy + 2, 2, 7, col3);
-
-            canvas.setTextSize(1);
-            canvas.setTextColor(currentTheme.primary, currentTheme.bg);
-            canvas.drawString("NET", sx + 14, wy + 1);
-        } else {
-            // Connecting sync pulse
-            canvas.setTextSize(1);
-            bool blink = fmodf(globalTime * 2.0f, 1.0f) < 0.5f;
-            canvas.setTextColor(blink ? currentTheme.glow : currentTheme.primary, currentTheme.bg);
-            canvas.drawString("LINK...", wx, wy + 1);
-        }
     }
 
     // 2c. Cybernetic SD Card Status Indicator

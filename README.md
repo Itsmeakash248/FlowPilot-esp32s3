@@ -3,7 +3,7 @@
 <div align="center">
 
 **An Intelligent Companion Robot Firmware for the ESP32-S3**  
-Featuring a 60 FPS Interactive Emotional Display, Dual H-Bridge Motor Kinematics, SoftAP Wi-Fi Telemetry, and Synchronized RGB Lighting.
+Featuring a 60 FPS Interactive Emotional Display, Dual H-Bridge Motor Kinematics, Real-Time Hardware Telemetry, and Synchronized RGB Lighting.
 
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v6.1%20%7C%20v5.x-blue.svg)](https://docs.espressif.com/projects/esp-idf/)
 [![Target](https://img.shields.io/badge/Target-ESP32--S3-red.svg)](https://www.espressif.com/en/products/socs/esp32-s3)
@@ -25,7 +25,7 @@ Featuring a 60 FPS Interactive Emotional Display, Dual H-Bridge Motor Kinematics
 - **Interactive Touch Tracking**: Integrated with the XPT2046 resistive touch controller:
   - **Gaze Tracking**: Eyes follow the user's finger in real-time across the screen.
   - **Tap Interaction**: Quick taps (<350ms) cycle between emotional states.
-- **HUD Telemetry Overlay**: On-screen indicators for Wi-Fi status, hotspot activity, client count, and battery/RSSI.
+- **HUD Telemetry Overlay**: On-screen indicators for FPS, Core 1 & Core 2 CPU usage, free heap RAM, and SD card status.
 
 ### 🏎️ 2. L829 / L298N Dual H-Bridge Motor Driver (`MotorDriver`)
 - **Silent Ultrasonic PWM**: 20 kHz hardware PWM via the ESP32-S3 LEDC peripheral with 10-bit resolution (0–1023), completely eliminating high-pitched motor whine.
@@ -59,15 +59,9 @@ Featuring a 60 FPS Interactive Emotional Display, Dual H-Bridge Motor Kinematics
   - `Blink`: Configurable frequency beacon flash.
   - `Off`: Low-power output shutoff.
 
-### 📡 5. Wi-Fi Manager & Hotspot Subsystem (`WifiManager`)
-- **SoftAP Hotspot**: Broadcasts `FlowPilot-AP` (`192.168.4.1`) with client device tracking.
-- **Station Mode (STA)**: Connects to external Wi-Fi networks with auto-reconnection and exponential backoff.
-- **Concurrent Mode (AP+STA)**: Runs hotspot and station connections simultaneously.
-- **Live HUD Sync**: Real-time IP address, RSSI, and connected client counts pushed to the display.
-
-### ⚡ 6. Dual-Core Asynchronous Architecture
-- **Core 1**: Dedicated high-speed animation task (`robot_face_task`) delivering stable 60 FPS without frame drops.
-- **Core 0**: Wi-Fi network stacks (lwIP), RF calibration, and background OS tasks.
+### ⚡ 5. Dual-Core Asynchronous Architecture
+- **Core 1**: Dedicated graphics rasterizer and SPI display pipeline (`robot_render_task`) delivering smooth DMA double-buffered rendering and interactive touch input.
+- **Core 0**: High-speed robot kinematics supervisor, autonomous AI behavior state machines, motor slew-rate controller, LED synchronization, and performance monitor telemetry (`robot_control_task`).
 
 ---
 
@@ -120,8 +114,7 @@ FlowPilot-esp32s3/
 │   ├── L829Driver.hpp          # Forwarding header for L829 naming
 │   ├── L298NDriver.hpp         # Forwarding header for L298N naming
 │   ├── RearLed.hpp / .cpp      # Rear Blue LED PWM controller & reverse taillight
-│   ├── RgbLed.hpp / .cpp       # WS2812 emotion-synced RGB LED controller
-│   └── WifiManager.hpp / .cpp  # SoftAP, Station, and HUD telemetry manager
+│   └── RgbLed.hpp / .cpp       # WS2812 emotion-synced RGB LED controller
 ```
 
 ---

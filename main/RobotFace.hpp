@@ -90,7 +90,6 @@ public:
     void triggerBlink();
     void triggerWink();
     void setLookAt(float normX, float normY); // -1.0f to 1.0f
-    void setWifiStatus(bool enabled, bool isAp, bool isConnected, int8_t rssi = 0, uint8_t clientCount = 0);
     void setSdCardStatus(bool mounted);
 
 private:
@@ -162,12 +161,6 @@ private:
     float voiceHeights[9];
     float blushIntensity, targetBlushIntensity;
 
-    // Wi-Fi HUD telemetry
-    bool wifiEnabled;
-    bool wifiIsAp;
-    bool wifiConnected;
-    int8_t wifiRssi;
-    uint8_t wifiClientCount;
     bool sdCardMounted;
 
     // Internal update methods

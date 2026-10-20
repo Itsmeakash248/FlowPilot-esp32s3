@@ -14,20 +14,19 @@
 #include "RobotFace.hpp"
 #include "SdCardManager.hpp"
 #include "driver/gpio.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "esp_wifi.h"
+#include "nvs_flash.h"
 #include <esp_private/brownout.h>
 #include <esp_rom_sys.h>
 
 /**
  * @brief Subsystem feature toggles (0 = disabled, 1 = enabled)
  */
-#define ENABLE_WIFI 0
 #define ENABLE_SD_CARD 0
 #define ENABLE_REAR_LED 0
 #define ENABLE_MOTOR_TEST 1
-
-#if ENABLE_WIFI
-#include "WifiManager.hpp"
-#endif
 
 #if ENABLE_MOTOR_TEST
 #include "MotorTest.hpp"
@@ -121,24 +120,15 @@ static void robot_control_task(void *pvParameters) {
     rgbLed.syncWithFace(robotFace);
     rgbLed.update(dt);
 
-    // 4. Sync Wi-Fi telemetry to RobotFace HUD (if enabled)
-#if ENABLE_WIFI
-    const WifiTelemetry &wifiTelem = WifiManager::getInstance().getTelemetry();
-    robotFace.setWifiStatus(wifiTelem.mode != WifiMode::Off,
-                            wifiTelem.isApActive, wifiTelem.isConnected,
-                            wifiTelem.rssi, wifiTelem.connectedClients);
-#else
-    robotFace.setWifiStatus(false, false, false, 0, 0);
-#endif
 
-    // 5. Sync SD Card status to RobotFace HUD
+    // 4. Sync SD Card status to RobotFace HUD
 #if ENABLE_SD_CARD
     robotFace.setSdCardStatus(getSdCardManager().isMounted());
 #else
     robotFace.setSdCardStatus(false);
 #endif
 
-    // 6. Periodic FPS & CPU telemetry logging every 5 seconds
+    // 5. Periodic FPS & CPU telemetry logging every 5 seconds
     if (loopStart - fpsLogTime >= 5000000) {
       float actualFps = perf.getFps();
       const MotorTelemetry &motorTelem = getMotorDriver().getTelemetry();
@@ -147,10 +137,8 @@ static void robot_control_task(void *pvParameters) {
 #else
       const char *motorPhase = "Disabled";
 #endif
-#if ENABLE_WIFI
       ESP_LOGI(TAG,
-               "Display Status: %.1f FPS | Core 1: %.1f%% | Core 2: %.1f%% (Total: %.1f%%) | Heap: %u KB | Emotion: %s (%d) | Motors: L: %+.2f R: %+.2f (%s) | Rear LED: %s | SD: %s | "
-               "Wi-Fi: %s (Clients: %u)",
+               "Display Status: %.1f FPS | Core 1: %.1f%% | Core 2: %.1f%% (Total: %.1f%%) | Heap: %u KB | Emotion: %s (%d) | Motors: L: %+.2f R: %+.2f (%s) | Rear LED: %s | SD: %s",
                actualFps, perf.getCpuCore1(), perf.getCpuCore2(), perf.getCpuTotal(),
                (unsigned int)(perf.getFreeHeap() / 1024),
                getEmotionName(robotFace.getEmotion()),
@@ -162,38 +150,15 @@ static void robot_control_task(void *pvParameters) {
                "Disabled",
 #endif
 #if ENABLE_SD_CARD
-               getSdCardManager().isMounted() ? "Mounted" : "Not Detected",
+               getSdCardManager().isMounted() ? "Mounted" : "Not Detected"
 #else
-               "Disabled",
+               "Disabled"
 #endif
-               wifiTelem.isApActive
-                   ? "Hotspot Active"
-                   : (wifiTelem.isConnected ? "Connected" : "Offline"),
-               wifiTelem.connectedClients);
-#else
-      ESP_LOGI(TAG,
-               "Display Status: %.1f FPS | Core 1: %.1f%% | Core 2: %.1f%% (Total: %.1f%%) | Heap: %u KB | Emotion: %s (%d) | Motors: L: %+.2f R: %+.2f (%s) | Rear LED: %s | SD: %s | "
-               "Wi-Fi: Disabled",
-               actualFps, perf.getCpuCore1(), perf.getCpuCore2(), perf.getCpuTotal(),
-               (unsigned int)(perf.getFreeHeap() / 1024),
-               getEmotionName(robotFace.getEmotion()),
-               (int)robotFace.getEmotion(),
-               motorTelem.currentLeft, motorTelem.currentRight, motorPhase,
-#if ENABLE_REAR_LED
-               getRearLedModeName(rearLed.getMode()),
-#else
-               "Disabled",
-#endif
-#if ENABLE_SD_CARD
-               getSdCardManager().isMounted() ? "Mounted" : "Not Detected");
-#else
-               "Disabled");
-#endif
-#endif
+      );
       fpsLogTime = loopStart;
     }
 
-    // 7. Cadence control: Maintain crisp 100 Hz control loop (10ms)
+    // 6. Cadence control: Maintain crisp 100 Hz control loop (10ms)
     int64_t elapsedUs = esp_timer_get_time() - loopStart;
     int64_t targetSleepUs = 10000 - elapsedUs;
 
@@ -276,6 +241,62 @@ static void robot_render_task(void *pvParameters) {
   }
 }
 
+/**
+ * @brief Wi-Fi Station Configuration & Event Handling (Official ESP-IDF Station Flow)
+ */
+#define WIFI_SSID "realme NARZO 70 Turbo 5G"
+#define WIFI_PASS "Trebledroids"
+
+static void wifi_event_handler(void *arg, esp_event_base_t event_base,
+                               int32_t event_id, void *event_data) {
+  if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+    esp_wifi_connect();
+  } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+    ESP_LOGI("WIFI_STA", "Disconnected. Reconnecting to AP...");
+    esp_wifi_connect();
+  } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+    ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
+    ESP_LOGI("WIFI_STA", "Connected! Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+  }
+}
+
+static void wifi_init_sta(void) {
+  // Initialize NVS (required by Wi-Fi driver)
+  esp_err_t ret = nvs_flash_init();
+  if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    ESP_ERROR_CHECK(nvs_flash_erase());
+    ret = nvs_flash_init();
+  }
+  ESP_ERROR_CHECK(ret);
+
+  ESP_ERROR_CHECK(esp_netif_init());
+  ESP_ERROR_CHECK(esp_event_loop_create_default());
+  esp_netif_create_default_wifi_sta();
+
+  wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+  ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+  esp_event_handler_instance_t instance_any_id;
+  esp_event_handler_instance_t instance_got_ip;
+  ESP_ERROR_CHECK(esp_event_handler_instance_register(
+      WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, &instance_any_id));
+  ESP_ERROR_CHECK(esp_event_handler_instance_register(
+      IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, &instance_got_ip));
+
+  wifi_config_t wifi_config = {};
+  strcpy((char *)wifi_config.sta.ssid, WIFI_SSID);
+  strcpy((char *)wifi_config.sta.password, WIFI_PASS);
+  wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+  wifi_config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
+
+  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+  ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+  ESP_ERROR_CHECK(esp_wifi_start());
+  esp_wifi_set_max_tx_power(60); // 15 dBm safe cap (prevents USB power sag)
+
+  ESP_LOGI("WIFI_STA", "Wi-Fi STA initialized. Connecting to \"%s\"...", WIFI_SSID);
+}
+
 extern "C" void app_main(void) {
   // Disable brownout detector to prevent false-positive software resets during
   // RF startup on USB power
@@ -287,6 +308,9 @@ extern "C" void app_main(void) {
 
   // Initialize Performance & CPU telemetry engine
   PerfMonitor::getInstance().init();
+
+  // Initialize Wi-Fi station early before heavy peripherals (display, motors, LEDs)
+  wifi_init_sta();
 
   // 1. Deselect display and touch chip selects (held inactive HIGH during bus
   // initialization) NOTE: Do NOT configure GPIO 4 here; the SDSPI driver will
@@ -401,37 +425,6 @@ extern "C" void app_main(void) {
              esp_err_to_name(motorErr));
   }
 
-  // 6. Initialize Connectivity & Wi-Fi Stack (matches FlxOS priority 30 after
-  // Display & Storage)
-#if ENABLE_WIFI
-  ESP_LOGI(TAG, "Initializing FlxOS-aligned Wi-Fi Connectivity Manager...");
-  WifiManager &wifiMgr = WifiManager::getInstance();
-  if (wifiMgr.init() == ESP_OK) {
-    // Start SoftAP Hotspot
-    wifiMgr.startAP("FlowPilot-AP", "flowpilot123", 1, 4);
-    ESP_LOGI(TAG,
-             "Wi-Fi Hotspot active -> SSID: FlowPilot-AP, Pass: flowpilot123, "
-             "Gateway: %s",
-             wifiMgr.getApIp());
-
-    // Check for boot-media provisioning from SD card (/sdcard/provisioning/wifi
-    // or /sdcard/wifi.json)
-#if ENABLE_SD_CARD
-    if (getSdCardManager().isMounted()) {
-      wifiMgr.importFromBootMedia();
-    } else {
-      // Attempt auto-connect to best known network from NVS store
-      wifiMgr.connectBestKnownNetwork();
-    }
-#else
-    wifiMgr.connectBestKnownNetwork();
-#endif
-  } else {
-    ESP_LOGE(TAG, "Failed to initialize Wi-Fi subsystem!");
-  }
-#else
-  ESP_LOGI(TAG, "Wi-Fi subsystem disabled (ENABLE_WIFI=0).");
-#endif
 
   // 6. Launch Core 0: High-speed Control, Kinematics & Hardware Supervisor Task (100 Hz)
   xTaskCreatePinnedToCore(robot_control_task, "robot_ctrl", 4096, NULL,
@@ -440,7 +433,7 @@ extern "C" void app_main(void) {
                           0 // Pinned to Core 0 (PRO_CPU)
   );
 
-  // 7. Launch Core 1: Dedicated Graphics Rasterizer, SPI Display Push & Touch Pipeline
+  // 8. Launch Core 1: Dedicated Graphics Rasterizer, SPI Display Push & Touch Pipeline
   xTaskCreatePinnedToCore(robot_render_task, "robot_render", 8192, NULL,
                           5, // Priority
                           NULL,
