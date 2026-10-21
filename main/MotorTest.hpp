@@ -9,14 +9,14 @@
 enum class MotorTestPhase {
     Idle,
     Countdown,
-    MotorA_Forward,   ///< Left Motor (Motor A) Forward Test
-    MotorA_Coast,     ///< Left Motor Coasting Test
-    MotorA_Reverse,   ///< Left Motor (Motor A) Reverse Test
-    MotorA_Brake,     ///< Left Motor Active Dynamic Brake Test
-    MotorB_Forward,   ///< Right Motor (Motor B) Forward Test
-    MotorB_Coast,     ///< Right Motor Coasting Test
-    MotorB_Reverse,   ///< Right Motor (Motor B) Reverse Test
-    MotorB_Brake,     ///< Right Motor Active Dynamic Brake Test
+    MotorA_Forward,   ///< Right Motor (Motor A) Forward Test
+    MotorA_Coast,     ///< Right Motor Coasting Test
+    MotorA_Reverse,   ///< Right Motor (Motor A) Reverse Test
+    MotorA_Brake,     ///< Right Motor Active Dynamic Brake Test
+    MotorB_Forward,   ///< Left Motor (Motor B) Forward Test
+    MotorB_Coast,     ///< Left Motor Coasting Test
+    MotorB_Reverse,   ///< Left Motor (Motor B) Reverse Test
+    MotorB_Brake,     ///< Left Motor Active Dynamic Brake Test
     Dual_Forward,     ///< Synchronized Straight Forward Drive Test
     Dual_Brake1,      ///< Dual Active Dynamic Brake Test
     Dual_Reverse,     ///< Synchronized Straight Reverse Drive Test

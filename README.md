@@ -45,21 +45,7 @@ Featuring a 60 FPS Interactive Emotional Display, Dual H-Bridge Motor Kinematics
 - **Emotion Sync Mode**: Synchronizes color palette and breathing frequency directly with the active face emotion and breath cycle.
 - **Standalone Modes**: Solid color, breathing/pulsing, continuous rainbow cycle, and emergency strobe.
 
-### 🚙 4. Rear Blue LED & Reverse Taillight Subsystem (`RearLed`)
-- **Assigned Hardware Pin**: **GPIO 21** (Exposed on right header J3, pin 15 of ESP32-S3 DevKit-C).
-- **Hardware PWM Controller**: Driven by **LEDC Timer 1, Channel 5** at 5 kHz with 10-bit resolution (0–1023 duty steps) for completely silent, flicker-free dimming.
-- **Perceptual Gamma Fading**: Employs human eye gamma correction ($V^2$) for smooth organic breathing and dimming.
-- **Autonomous Reverse Sync**: Automatically samples `MotorDriver` telemetry in real-time; activates an aggressive 5 Hz hazard strobe when reversing (`throttle < 0`), and transitions back to a calming 30% taillight running glow when stationary or moving forward.
-- **Dynamic Lighting Modes**:
-  - `ReverseSync`: Intelligent taillight running light + reverse hazard strobe (Default).
-  - `Breathing`: Continuous sinusoidal vitality blue breathing glow.
-  - `Heartbeat`: Double-pulse companion robot organic vitality rhythm.
-  - `EmotionSync`: Synchronized with facial emotions (e.g. Diya flame shimmer during Dasara, alert blink when Surprised, deep slow breath when Sleepy).
-  - `Solid`: Steady dimmable illumination.
-  - `Blink`: Configurable frequency beacon flash.
-  - `Off`: Low-power output shutoff.
-
-### ⚡ 5. Dual-Core Asynchronous Architecture
+### ⚡ 4. Dual-Core Asynchronous Architecture
 - **Core 1**: Dedicated graphics rasterizer and SPI display pipeline (`robot_render_task`) delivering smooth DMA double-buffered rendering and interactive touch input.
 - **Core 0**: High-speed robot kinematics supervisor, autonomous AI behavior state machines, motor slew-rate controller, LED synchronization, and performance monitor telemetry (`robot_control_task`).
 
@@ -86,7 +72,6 @@ The GPIO assignment is carefully mapped to avoid conflicts with Octal PSRAM/Flas
 | | **IN4** (Motor B PWM 2) | **GPIO 17** | LEDC Channel 4 | Right Motor Direct PWM (20 kHz) |
 | | **ENA / ENB** | *None* | Onboard 5V Jumpers | **Excluded** (Jumpers left ON 5V) |
 | **Onboard RGB** | WS2812 DIN | **GPIO 48** | RMT / SPI Strip | Onboard DevKit LED |
-| **Rear Blue LED** | LED Anode (+) | **GPIO 21** | LEDC Channel 5 (Timer 1) | Taillight / Reverse beacon (5 kHz, 10-bit PWM) |
 
 > [!TIP]
 > **ENA and ENB pins are excluded by default.** By keeping the factory 5V jumper caps on the L298N board, speed and direction are controlled directly via 4 PWM lines on IN1–IN4 (GPIOs 15, 16, 17, 18), forming a convenient contiguous block on the dev board. For full wiring diagrams, see the **[Motor Driver Hardware Guide](docs/MOTOR_DRIVER.md)**.
@@ -113,7 +98,6 @@ FlowPilot-esp32s3/
 │   ├── MotorDriver.hpp / .cpp  # L829 / L298N dual H-bridge motor driver
 │   ├── L829Driver.hpp          # Forwarding header for L829 naming
 │   ├── L298NDriver.hpp         # Forwarding header for L298N naming
-│   ├── RearLed.hpp / .cpp      # Rear Blue LED PWM controller & reverse taillight
 │   └── RgbLed.hpp / .cpp       # WS2812 emotion-synced RGB LED controller
 ```
 

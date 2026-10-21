@@ -9,13 +9,13 @@
 #include "LGFX_Config.hpp"
 #include "MotorDriver.hpp"
 #include "PerfMonitor.hpp"
-#include "RearLed.hpp"
 #include "RgbLed.hpp"
 #include "RobotFace.hpp"
 #include "SdCardManager.hpp"
 #include "driver/gpio.h"
 #include "esp_event.h"
 #include "esp_netif.h"
+#include "esp_phy_init.h"
 #include "esp_wifi.h"
 #include "nvs_flash.h"
 #include <esp_private/brownout.h>
@@ -24,8 +24,9 @@
 /**
  * @brief Subsystem feature toggles (0 = disabled, 1 = enabled)
  */
+#define ENABLE_WIFI 0              ///< Wi-Fi station mode toggle (0 = disabled, 1 = enabled)
+#define ENABLE_ROBOT_SUBSYSTEMS 1  ///< Robot subsystems (display, motors, LEDs, touch, SMP tasks)
 #define ENABLE_SD_CARD 0
-#define ENABLE_REAR_LED 0
 #define ENABLE_MOTOR_TEST 1
 
 #if ENABLE_MOTOR_TEST
@@ -46,22 +47,6 @@ static const char *TAG = "ROBOT_MAIN";
 
 static LGFX display;
 static RgbLed rgbLed;
-#if ENABLE_REAR_LED
-static RearLed rearLed;
-
-static const char *getRearLedModeName(RearLedMode mode) {
-  switch (mode) {
-  case RearLedMode::Off:         return "Off";
-  case RearLedMode::Solid:       return "Solid";
-  case RearLedMode::Breathing:   return "Breathing";
-  case RearLedMode::Blink:       return "Blink";
-  case RearLedMode::Heartbeat:   return "Heartbeat";
-  case RearLedMode::ReverseSync: return "ReverseSync";
-  case RearLedMode::EmotionSync: return "EmotionSync";
-  default:                       return "Unknown";
-  }
-}
-#endif
 
 static const char *getEmotionName(RobotEmotion emo) {
   switch (emo) {
@@ -110,13 +95,7 @@ static void robot_control_task(void *pvParameters) {
     robotFace.update(dt);
     getMotorDriver().update(dt);
 
-    // 3. Update Rear Blue LED (GPIO 21) & Onboard RGB LED (GPIO 48)
-#if ENABLE_REAR_LED
-    rearLed.syncWithMotors(getMotorDriver());
-    rearLed.syncWithFace(robotFace);
-    rearLed.update(dt);
-#endif
-
+    // 3. Update Onboard RGB LED (GPIO 48)
     rgbLed.syncWithFace(robotFace);
     rgbLed.update(dt);
 
@@ -138,17 +117,12 @@ static void robot_control_task(void *pvParameters) {
       const char *motorPhase = "Disabled";
 #endif
       ESP_LOGI(TAG,
-               "Display Status: %.1f FPS | Core 1: %.1f%% | Core 2: %.1f%% (Total: %.1f%%) | Heap: %u KB | Emotion: %s (%d) | Motors: L: %+.2f R: %+.2f (%s) | Rear LED: %s | SD: %s",
+               "Display Status: %.1f FPS | Core 1: %.1f%% | Core 2: %.1f%% (Total: %.1f%%) | Heap: %u KB | Emotion: %s (%d) | Motors: L: %+.2f R: %+.2f (%s) | SD: %s",
                actualFps, perf.getCpuCore1(), perf.getCpuCore2(), perf.getCpuTotal(),
                (unsigned int)(perf.getFreeHeap() / 1024),
                getEmotionName(robotFace.getEmotion()),
                (int)robotFace.getEmotion(),
                motorTelem.currentLeft, motorTelem.currentRight, motorPhase,
-#if ENABLE_REAR_LED
-               getRearLedModeName(rearLed.getMode()),
-#else
-               "Disabled",
-#endif
 #if ENABLE_SD_CARD
                getSdCardManager().isMounted() ? "Mounted" : "Not Detected"
 #else
@@ -241,6 +215,7 @@ static void robot_render_task(void *pvParameters) {
   }
 }
 
+#if ENABLE_WIFI
 /**
  * @brief Wi-Fi Station Configuration & Event Handling (Official ESP-IDF Station Flow)
  */
@@ -261,6 +236,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 }
 
 static void wifi_init_sta(void) {
+  // Let power rails settle after boot
+  vTaskDelay(pdMS_TO_TICKS(300));
+
   // Initialize NVS (required by Wi-Fi driver)
   esp_err_t ret = nvs_flash_init();
   if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -274,6 +252,7 @@ static void wifi_init_sta(void) {
   esp_netif_create_default_wifi_sta();
 
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+  cfg.sta_disconnected_pm = false; // Prevent modem-sleep from gating USB clock when disconnected
   ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
   esp_event_handler_instance_t instance_any_id;
@@ -292,10 +271,12 @@ static void wifi_init_sta(void) {
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
   ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
   ESP_ERROR_CHECK(esp_wifi_start());
-  esp_wifi_set_max_tx_power(60); // 15 dBm safe cap (prevents USB power sag)
+  esp_wifi_set_ps(WIFI_PS_NONE); // Disable power save modem sleep
+  esp_wifi_set_max_tx_power(40); // 10 dBm safe minimum (40 * 0.25 dBm) to prevent USB brownouts
 
   ESP_LOGI("WIFI_STA", "Wi-Fi STA initialized. Connecting to \"%s\"...", WIFI_SSID);
 }
+#endif
 
 extern "C" void app_main(void) {
   // Disable brownout detector to prevent false-positive software resets during
@@ -309,9 +290,14 @@ extern "C" void app_main(void) {
   // Initialize Performance & CPU telemetry engine
   PerfMonitor::getInstance().init();
 
+#if ENABLE_WIFI
   // Initialize Wi-Fi station early before heavy peripherals (display, motors, LEDs)
   wifi_init_sta();
+#else
+  ESP_LOGI(TAG, "Wi-Fi subsystem disabled (ENABLE_WIFI=0).");
+#endif
 
+#if ENABLE_ROBOT_SUBSYSTEMS
   // 1. Deselect display and touch chip selects (held inactive HIGH during bus
   // initialization) NOTE: Do NOT configure GPIO 4 here; the SDSPI driver will
   // configure and manage GPIO 4 (SD CS) directly.
@@ -390,25 +376,6 @@ extern "C" void app_main(void) {
              esp_err_to_name(ledErr));
   }
 
-  // 4b. Initialize Rear Blue LED on GPIO 21 (LEDC Channel 5, Timer 1, 5 kHz PWM)
-#if ENABLE_REAR_LED
-  esp_err_t rearLedErr = rearLed.init(GPIO_NUM_21);
-  if (rearLedErr == ESP_OK) {
-    rearLed.setBrightness(255);
-    rearLed.setMode(RearLedMode::ReverseSync);
-    ESP_LOGI(TAG,
-             "Rear Blue LED (GPIO 21) initialized at FULL brightness (255/255, 100%%) "
-             "in ReverseSync taillight mode (LEDC Ch 5, Timer 1, 5 kHz, 10-bit PWM).");
-  } else {
-    ESP_LOGW(TAG, "Rear Blue LED initialization returned: %s",
-             esp_err_to_name(rearLedErr));
-  }
-#else
-  gpio_reset_pin(GPIO_NUM_21);
-  gpio_set_direction(GPIO_NUM_21, GPIO_MODE_OUTPUT);
-  gpio_set_level(GPIO_NUM_21, 0);
-  ESP_LOGI(TAG, "Rear Blue LED (GPIO 21): Disabled by configuration toggle (held LOW).");
-#endif
 
   // 5. Initialize L298N / L829 Dual H-Bridge Motor Driver (4-wire direct PWM,
   // ENA/ENB excluded)
@@ -442,4 +409,16 @@ extern "C" void app_main(void) {
 
   ESP_LOGI(TAG,
            "app_main complete: Dual-Core SMP Active (Core 0: Control/Kinematics, Core 1: Render/Touch).");
+#else
+  // Keep LCD backlight pin LOW to prevent current draw
+  gpio_reset_pin(GPIO_NUM_7);
+  gpio_set_direction(GPIO_NUM_7, GPIO_MODE_OUTPUT);
+  gpio_set_level(GPIO_NUM_7, 0);
+
+  ESP_LOGI(TAG, "=== All robot subsystems disabled: Pure Wi-Fi Station Mode Active ===");
+  while (true) {
+    vTaskDelay(pdMS_TO_TICKS(5000));
+    ESP_LOGI(TAG, "Wi-Fi Standalone Heartbeat | Free Heap: %lu B", (unsigned long)esp_get_free_heap_size());
+  }
+#endif
 }
