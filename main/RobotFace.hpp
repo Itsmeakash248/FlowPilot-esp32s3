@@ -90,7 +90,6 @@ public:
     void triggerBlink();
     void triggerWink();
     void setLookAt(float normX, float normY); // -1.0f to 1.0f
-    void setSdCardStatus(bool mounted);
 
 private:
     LGFX& display;
@@ -160,8 +159,6 @@ private:
     float voicePhase;
     float voiceHeights[9];
     float blushIntensity, targetBlushIntensity;
-
-    bool sdCardMounted;
 
     // Internal update methods
     void updateAutonomousAI(float dt);

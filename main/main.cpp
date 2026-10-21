@@ -11,7 +11,6 @@
 #include "PerfMonitor.hpp"
 #include "RgbLed.hpp"
 #include "RobotFace.hpp"
-#include "SdCardManager.hpp"
 #include "driver/gpio.h"
 #include "esp_event.h"
 #include "esp_netif.h"
@@ -26,8 +25,8 @@
  */
 #define ENABLE_WIFI 0              ///< Wi-Fi station mode toggle (0 = disabled, 1 = enabled)
 #define ENABLE_ROBOT_SUBSYSTEMS 1  ///< Robot subsystems (display, motors, LEDs, touch, SMP tasks)
-#define ENABLE_SD_CARD 0
-#define ENABLE_MOTOR_TEST 1
+#define ENABLE_MOTOR_TEST 0              ///< Dual-motor hardware self-test suite toggle (0 = disabled, 1 = enabled)
+#define ENABLE_RGB_LED 0                 ///< Onboard WS2812 NeoPixel RGB LED on GPIO 48 (0 = disabled, 1 = enabled)
 
 #if ENABLE_MOTOR_TEST
 #include "MotorTest.hpp"
@@ -36,17 +35,17 @@
 /**
  * @brief Hardware & configuration constants
  */
+#if ENABLE_RGB_LED
 static constexpr uint8_t RGB_LED_MAX_BRIGHTNESS =
     RgbLed::MAX_BRIGHTNESS_LIMIT; ///< Safe hardware limit capped at 20% (51 / 255
                                   ///< = 20.0%)
-static constexpr const char *SD_CARD_MOUNT_POINT =
-    SdCardConfig::DEFAULT_MOUNT_POINT; ///< Standard SD Card mount point
-                                       ///< ("/sdcard")
-
+#endif
 static const char *TAG = "ROBOT_MAIN";
 
 static LGFX display;
+#if ENABLE_RGB_LED
 static RgbLed rgbLed;
+#endif
 
 static const char *getEmotionName(RobotEmotion emo) {
   switch (emo) {
@@ -96,18 +95,13 @@ static void robot_control_task(void *pvParameters) {
     getMotorDriver().update(dt);
 
     // 3. Update Onboard RGB LED (GPIO 48)
+#if ENABLE_RGB_LED
     rgbLed.syncWithFace(robotFace);
     rgbLed.update(dt);
-
-
-    // 4. Sync SD Card status to RobotFace HUD
-#if ENABLE_SD_CARD
-    robotFace.setSdCardStatus(getSdCardManager().isMounted());
-#else
-    robotFace.setSdCardStatus(false);
 #endif
 
-    // 5. Periodic FPS & CPU telemetry logging every 5 seconds
+
+    // 4. Periodic FPS & CPU telemetry logging every 5 seconds
     if (loopStart - fpsLogTime >= 5000000) {
       float actualFps = perf.getFps();
       const MotorTelemetry &motorTelem = getMotorDriver().getTelemetry();
@@ -117,22 +111,16 @@ static void robot_control_task(void *pvParameters) {
       const char *motorPhase = "Disabled";
 #endif
       ESP_LOGI(TAG,
-               "Display Status: %.1f FPS | Core 1: %.1f%% | Core 2: %.1f%% (Total: %.1f%%) | Heap: %u KB | Emotion: %s (%d) | Motors: L: %+.2f R: %+.2f (%s) | SD: %s",
+               "Display Status: %.1f FPS | Core 1: %.1f%% | Core 2: %.1f%% (Total: %.1f%%) | Heap: %u KB | Emotion: %s (%d) | Motors: L: %+.2f R: %+.2f (%s)",
                actualFps, perf.getCpuCore1(), perf.getCpuCore2(), perf.getCpuTotal(),
                (unsigned int)(perf.getFreeHeap() / 1024),
                getEmotionName(robotFace.getEmotion()),
                (int)robotFace.getEmotion(),
-               motorTelem.currentLeft, motorTelem.currentRight, motorPhase,
-#if ENABLE_SD_CARD
-               getSdCardManager().isMounted() ? "Mounted" : "Not Detected"
-#else
-               "Disabled"
-#endif
-      );
+               motorTelem.currentLeft, motorTelem.currentRight, motorPhase);
       fpsLogTime = loopStart;
     }
 
-    // 6. Cadence control: Maintain crisp 100 Hz control loop (10ms)
+    // 5. Cadence control: Maintain crisp 100 Hz control loop (10ms)
     int64_t elapsedUs = esp_timer_get_time() - loopStart;
     int64_t targetSleepUs = 10000 - elapsedUs;
 
@@ -299,8 +287,7 @@ extern "C" void app_main(void) {
 
 #if ENABLE_ROBOT_SUBSYSTEMS
   // 1. Deselect display and touch chip selects (held inactive HIGH during bus
-  // initialization) NOTE: Do NOT configure GPIO 4 here; the SDSPI driver will
-  // configure and manage GPIO 4 (SD CS) directly.
+  // initialization).
   gpio_config_t csConf = {
       .pin_bit_mask = (1ULL << GPIO_NUM_5) | (1ULL << GPIO_NUM_10),
       .mode = GPIO_MODE_OUTPUT,
@@ -312,28 +299,7 @@ extern "C" void app_main(void) {
   gpio_set_level(GPIO_NUM_5, 1);  // Touch CS inactive
   gpio_set_level(GPIO_NUM_10, 1); // Display CS inactive
 
-  // 2. Initialize SD Card subsystem FIRST (matches FlxOS boot architecture:
-  // priority 15 before Display priority 20) CS: GPIO 4, shared SPI2 on MOSI:
-  // 11, MISO: 13, SCLK: 12, Mount: /sdcard
-#if ENABLE_SD_CARD
-  ESP_LOGI(TAG, "Initializing SD Card subsystem (CS: GPIO 4, Mount: %s)...",
-           SD_CARD_MOUNT_POINT);
-  esp_err_t sdErr = getSdCardManager().init();
-  if (sdErr == ESP_OK) {
-    ESP_LOGI(TAG, "SD Card mounted successfully at %s.", SD_CARD_MOUNT_POINT);
-    getSdCardManager().testCard();
-  } else {
-    ESP_LOGW(TAG,
-             "SD Card not mounted (%s). Operating in internal storage mode.",
-             esp_err_to_name(sdErr));
-  }
-#else
-  ESP_LOGI(TAG, "SD Card subsystem disabled (ENABLE_SD_CARD=0). Operating in "
-                "internal storage mode.");
-#endif
-
-  // 3. Initialize LovyanGFX Display Controller (attaches to SPI2 bus
-  // initialized with full DMA by SD Card)
+  // 2. Initialize LovyanGFX Display Controller (ILI9341 + XPT2046 on SPI2)
   ESP_LOGI(TAG,
            "Initializing LovyanGFX display (ESP32-S3 + ILI9341 + XPT2046)...");
   if (!display.init()) {
@@ -355,14 +321,15 @@ extern "C" void app_main(void) {
 
   ESP_LOGI(TAG, "LovyanGFX display initialized (320x240 landscape).");
 
-  // 3b. Initialize RobotFace Engine
+  // 2b. Initialize RobotFace Engine
   if (!robotFace.init()) {
     ESP_LOGE(TAG, "Failed to initialize RobotFace!");
     return;
   }
   ESP_LOGI(TAG, "RobotFace initialized successfully.");
 
-  // 4. Initialize Onboard WS2812 RGB LED on GPIO 48
+  // 3. Initialize Onboard WS2812 RGB LED on GPIO 48
+#if ENABLE_RGB_LED
   esp_err_t ledErr = rgbLed.init(GPIO_NUM_48);
   if (ledErr == ESP_OK) {
     rgbLed.setBrightness(RGB_LED_MAX_BRIGHTNESS);
@@ -375,9 +342,17 @@ extern "C" void app_main(void) {
     ESP_LOGW(TAG, "Onboard RGB LED initialization returned: %s",
              esp_err_to_name(ledErr));
   }
+#else
+  // Hold the WS2812 data line low so the NeoPixel stays dark
+  gpio_reset_pin(GPIO_NUM_48);
+  gpio_set_direction(GPIO_NUM_48, GPIO_MODE_OUTPUT);
+  gpio_set_level(GPIO_NUM_48, 0);
+  ESP_LOGI(TAG, "Onboard RGB LED subsystem disabled (ENABLE_RGB_LED=0), "
+                "GPIO 48 held LOW.");
+#endif
 
 
-  // 5. Initialize L298N / L829 Dual H-Bridge Motor Driver (4-wire direct PWM,
+  // 4. Initialize L298N / L829 Dual H-Bridge Motor Driver (4-wire direct PWM,
   // ENA/ENB excluded)
   esp_err_t motorErr = getMotorDriver().init();
   if (motorErr == ESP_OK) {
@@ -393,14 +368,14 @@ extern "C" void app_main(void) {
   }
 
 
-  // 6. Launch Core 0: High-speed Control, Kinematics & Hardware Supervisor Task (100 Hz)
+  // 5. Launch Core 0: High-speed Control, Kinematics & Hardware Supervisor Task (100 Hz)
   xTaskCreatePinnedToCore(robot_control_task, "robot_ctrl", 4096, NULL,
                           4, // Priority
                           NULL,
                           0 // Pinned to Core 0 (PRO_CPU)
   );
 
-  // 8. Launch Core 1: Dedicated Graphics Rasterizer, SPI Display Push & Touch Pipeline
+  // 6. Launch Core 1: Dedicated Graphics Rasterizer, SPI Display Push & Touch Pipeline
   xTaskCreatePinnedToCore(robot_render_task, "robot_render", 8192, NULL,
                           5, // Priority
                           NULL,

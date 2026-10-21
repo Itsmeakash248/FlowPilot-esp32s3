@@ -25,7 +25,7 @@ Featuring a 60 FPS Interactive Emotional Display, Dual H-Bridge Motor Kinematics
 - **Interactive Touch Tracking**: Integrated with the XPT2046 resistive touch controller:
   - **Gaze Tracking**: Eyes follow the user's finger in real-time across the screen.
   - **Tap Interaction**: Quick taps (<350ms) cycle between emotional states.
-- **HUD Telemetry Overlay**: On-screen indicators for FPS, Core 1 & Core 2 CPU usage, free heap RAM, and SD card status.
+- **HUD Telemetry Overlay**: On-screen indicators for FPS, Core 1 & Core 2 CPU usage, and free heap RAM.
 
 ### 🏎️ 2. L829 / L298N Dual H-Bridge Motor Driver (`MotorDriver`)
 - **Silent Ultrasonic PWM**: 20 kHz hardware PWM via the ESP32-S3 LEDC peripheral with 10-bit resolution (0–1023), completely eliminating high-pitched motor whine.

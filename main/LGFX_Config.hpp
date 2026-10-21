@@ -30,7 +30,7 @@ public:
             cfg.freq_write = 40000000;    // 40 MHz stable write frequency for ILI9341
             cfg.freq_read  = 16000000;    // 16 MHz read frequency
             cfg.spi_3wire  = false;       // 4-wire SPI (MOSI/MISO separate)
-            cfg.use_lock   = true;        // SPI bus shared with touch & SD card
+            cfg.use_lock   = true;        // SPI bus shared with touch
             cfg.dma_channel = SPI_DMA_CH_AUTO;
 
             cfg.pin_sclk   = 12;

@@ -167,7 +167,6 @@ RobotFace::RobotFace(LGFX& disp)
     , bounceOffset(0.0f)
     , voicePhase(0.0f)
     , blushIntensity(0.0f), targetBlushIntensity(0.0f)
-    , sdCardMounted(false)
     , perfFps(60.0f)
     , perfCpuCore1(0.0f)
     , perfCpuCore2(0.0f)
@@ -418,10 +417,6 @@ void RobotFace::nextEmotion() {
 void RobotFace::setLookAt(float normX, float normY) {
     targetGazeX = std::max(-26.0f, std::min(26.0f, normX * 26.0f));
     targetGazeY = std::max(-20.0f, std::min(20.0f, normY * 20.0f));
-}
-
-void RobotFace::setSdCardStatus(bool mounted) {
-    sdCardMounted = mounted;
 }
 
 void RobotFace::handleTouch(int32_t x, int32_t y) {
@@ -787,17 +782,6 @@ void RobotFace::drawVisorHUD() {
     if (currentEmotion == RobotEmotion::Dasara) {
         // Miniature glowing auspicious Diya in top-center HUD
         drawDiya((float)(SCREEN_WIDTH / 2), (float)(by + 3), 0.55f, globalTime * 4.5f);
-    }
-
-    // 2c. Cybernetic SD Card Status Indicator
-    if (sdCardMounted) {
-        constexpr int32_t sdx = 188, sdy = by;
-        canvas.setTextSize(1);
-        canvas.setTextColor(currentTheme.accent, currentTheme.bg);
-        canvas.drawString("SD", sdx, sdy + 1);
-        // Micro-SD card outline badge
-        canvas.drawRect(sdx + 14, sdy + 1, 6, 8, currentTheme.primary);
-        canvas.drawPixel(sdx + 14, sdy + 1, currentTheme.bg);
     }
 
     // 3. Top-Right Neural Telemetry ECG Wave
