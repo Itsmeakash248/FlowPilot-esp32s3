@@ -162,6 +162,7 @@ RobotFace::RobotFace(LGFX& disp)
     , touchReleaseTimer(0.0f)
     , isUserTouching(false)
     , isBeingPetted(false)
+    , autonomousEnabled(true)
     , globalTime(0.0f)
     , breathPhase(0.0f)
     , bounceOffset(0.0f)
@@ -178,6 +179,9 @@ RobotFace::RobotFace(LGFX& disp)
     , overlayY(0)
     , overlayW(0)
     , overlayH(0)
+    , wifiEnabled(false)
+    , wifiConnected(false)
+    , wifiRssi(0)
 {
     currentTheme = getEmotionTheme(RobotEmotion::Dasara);
     targetTheme = currentTheme;
@@ -193,7 +197,7 @@ RobotFace::~RobotFace() {
 }
 
 bool RobotFace::init() {
-    ESP_LOGI(TAG, "Allocating double-buffered sprite in internal SRAM for high-speed DMA (320x240 RGB565)...");
+    ESP_LOGI(TAG, "Allocating 16-bit sprite in internal SRAM for high-speed DMA (320x240 RGB565)...");
     canvas.setPsram(false);
     canvas.setColorDepth(16);
     void* buf = canvas.createSprite(SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -508,12 +512,17 @@ void RobotFace::updateAutonomousAI(float dt) {
         touchReleaseTimer -= dt;
         if (touchReleaseTimer <= 0.0f) {
             releaseTouch();
-            // Return to festive Dasara celebration if it was petted
-            if (currentEmotion == RobotEmotion::Happy) {
+            // Return to festive Dasara celebration if it was petted, unless
+            // autonomous behavior is disabled for manual control.
+            if (autonomousEnabled && currentEmotion == RobotEmotion::Happy) {
                 setEmotion(RobotEmotion::Dasara, false);
             }
         }
         return; // User has control, skip autonomous drift
+    }
+
+    if (!autonomousEnabled) {
+        return; // Web/manual control is holding the expression and gaze
     }
 
     // Autonomous Saccades (Lifelike gaze shifts)
@@ -784,7 +793,12 @@ void RobotFace::drawVisorHUD() {
         drawDiya((float)(SCREEN_WIDTH / 2), (float)(by + 3), 0.55f, globalTime * 4.5f);
     }
 
-    // 3. Top-Right Neural Telemetry ECG Wave
+    // 3. Compact Wi-Fi link indicator, grouped with the battery/status HUD
+    int32_t wifiX = bx + 26 + canvas.textWidth(statusStr) + 6;
+    if (wifiX > 120) wifiX = 120; // Keep clear of the centred Diya
+    drawWifiIndicator(wifiX, by);
+
+    // 4. Top-Right Neural Telemetry ECG Wave
     constexpr int32_t hx = SCREEN_WIDTH - 64, hy = by + 4;
     canvas.drawFastHLine(hx, hy, 8, currentTheme.glow);
     // Animated heartbeat spike
@@ -1314,7 +1328,7 @@ void RobotFace::drawPerfOverlay() {
                      (perfCpuCore2 < 80.0f) ? (uint16_t)0xFDE0 : (uint16_t)0xFA00;
 
     if (perfMode == PerfOverlayMode::Compact) {
-        // [ 60fps │ C1 12% │ C2 34% ● ] (Ultra-compact 120x14 px)
+        // [ 30fps │ C1 12% │ C2 34% ● ] (Ultra-compact 120x14 px)
         // FPS section
         char fpsVal[16];
         snprintf(fpsVal, sizeof(fpsVal), "%2.0f", perfFps);
@@ -1356,7 +1370,7 @@ void RobotFace::drawPerfOverlay() {
         canvas.drawPixel(x + 112, y + h / 2, pipCol);
 
     } else if (perfMode == PerfOverlayMode::Detailed) {
-        // [ 60fps │ C1 12% │ C2 34% │ 284K ] (168x14 px)
+        // [ 30fps │ C1 12% │ C2 34% │ 284K ] (168x14 px)
         char fpsVal[16];
         snprintf(fpsVal, sizeof(fpsVal), "%2.0f", perfFps);
         canvas.setTextColor(fpsCol, currentTheme.bg);
@@ -1419,5 +1433,58 @@ void RobotFace::drawPerfOverlay() {
         float pulse = fmodf(globalTime * 3.0f, 1.0f);
         uint16_t pipCol = (pulse < 0.35f) ? currentTheme.secondary : currentTheme.glow;
         canvas.drawPixel(x + w - 6, y + h / 2, pipCol);
+    }
+}
+
+void RobotFace::setWifiStats(bool enabled, bool connected, int8_t rssi) {
+    wifiEnabled = enabled;
+    wifiConnected = enabled && connected;
+    wifiRssi = rssi;
+}
+
+void RobotFace::drawWifiIndicator(int32_t x, int32_t y) {
+    if (!wifiEnabled) return;
+
+    // Inline 27x10 marker: [ ((o)) |||| ]
+    int bars = 0;
+    uint16_t linkCol = currentTheme.glow;
+    if (wifiConnected) {
+        if (wifiRssi >= -60) {
+            bars = 4;
+            linkCol = currentTheme.secondary;
+        } else if (wifiRssi >= -70) {
+            bars = 3;
+            linkCol = currentTheme.primary;
+        } else if (wifiRssi >= -80) {
+            bars = 2;
+            linkCol = (uint16_t)0xFDE0; // Amber: weak link
+        } else {
+            bars = 1;
+            linkCol = (uint16_t)0xFA00; // Red: very weak link
+        }
+    }
+
+    bool blink = fmodf(globalTime * 1.2f, 1.0f) < 0.55f;
+    uint16_t iconCol =
+        wifiConnected ? linkCol : (blink ? currentTheme.accent : currentTheme.glow);
+
+    // Wi-Fi fan icon (dot + three arcs)
+    const int32_t cx = x + 7;
+    const int32_t cy = y + 9;
+    canvas.fillCircle(cx, cy, 1, iconCol);
+    canvas.drawArc(cx, cy, 2, 3, 225.0f, 315.0f, iconCol);
+    canvas.drawArc(cx, cy, 4, 5, 225.0f, 315.0f, iconCol);
+    canvas.drawArc(cx, cy, 6, 7, 225.0f, 315.0f, iconCol);
+
+    if (!wifiConnected) {
+        // Slash through the fan while the station is retrying
+        canvas.drawLine(cx - 6, cy - 5, cx + 4, cy + 1, currentTheme.accent);
+    }
+
+    // Four ascending signal bars
+    for (int i = 0; i < 4; ++i) {
+        int32_t bh = 3 + i * 2;
+        uint16_t barCol = (i < bars) ? linkCol : currentTheme.glow;
+        canvas.fillRect(x + 16 + i * 3, cy - bh, 2, bh, barCol);
     }
 }

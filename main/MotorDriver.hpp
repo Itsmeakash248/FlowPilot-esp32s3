@@ -28,12 +28,12 @@ enum class MotorControlMode {
  * @brief Complete configuration parameters for L298N / L829 Motor Driver
  */
 struct MotorDriverConfig {
-    // Motor A (Right Motor) Pins
+    // Motor A (Left Motor) Pins
     gpio_num_t in1Pin = GPIO_NUM_15;       ///< Motor A Control Pin 1 (Direct PWM in 4-wire mode)
     gpio_num_t in2Pin = GPIO_NUM_16;       ///< Motor A Control Pin 2 (Direct PWM in 4-wire mode)
     gpio_num_t enaPin = GPIO_NUM_NC;       ///< Optional Speed Enable PWM (set to GPIO_NUM_NC to exclude, keeping 5V jumper)
 
-    // Motor B (Left Motor) Pins
+    // Motor B (Right Motor) Pins
     gpio_num_t in3Pin = GPIO_NUM_18;       ///< Motor B Control Pin 1 (Direct PWM in 4-wire mode)
     gpio_num_t in4Pin = GPIO_NUM_17;       ///< Motor B Control Pin 2 (Direct PWM in 4-wire mode)
     gpio_num_t enbPin = GPIO_NUM_NC;       ///< Optional Speed Enable PWM (set to GPIO_NUM_NC to exclude, keeping 5V jumper)
@@ -136,13 +136,13 @@ public:
     void setMotorSpeeds(float leftSpeed, float rightSpeed);
 
     /**
-     * @brief Command Motor A (Right) directly
+     * @brief Command Motor A (Left) directly
      * @param speed Speed [-1.0 .. 1.0] (positive = forward, negative = reverse, 0 = stop)
      */
     void setMotorA(float speed);
 
     /**
-     * @brief Command Motor B (Left) directly
+     * @brief Command Motor B (Right) directly
      * @param speed Speed [-1.0 .. 1.0] (positive = forward, negative = reverse, 0 = stop)
      */
     void setMotorB(float speed);
@@ -163,22 +163,22 @@ public:
     void stop(bool brake = false);
 
     /**
-     * @brief Active electrical brake for Motor A (Right)
+     * @brief Active electrical brake for Motor A (Left)
      */
     void brakeMotorA();
 
     /**
-     * @brief Active electrical brake for Motor B (Left)
+     * @brief Active electrical brake for Motor B (Right)
      */
     void brakeMotorB();
 
     /**
-     * @brief Low-power free-wheeling coast for Motor A (Right)
+     * @brief Low-power free-wheeling coast for Motor A (Left)
      */
     void coastMotorA();
 
     /**
-     * @brief Low-power free-wheeling coast for Motor B (Left)
+     * @brief Low-power free-wheeling coast for Motor B (Right)
      */
     void coastMotorB();
 

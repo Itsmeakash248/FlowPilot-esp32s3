@@ -37,9 +37,9 @@ struct RobotTheme {
  */
 enum class PerfOverlayMode {
     Off,       ///< Overlay hidden
-    Compact,   ///< Compact badge: "FPS 60.0 | CPU 24% [==  ]"
-    Detailed,  ///< Detailed dual-core badge: "FPS 60.0 | C0: 18% C1: 30% | HEAP 280K"
-    Minimal,   ///< Minimalist badge: "60.0 FPS · 24%"
+    Compact,   ///< Compact badge: "FPS 30.0 | CPU 24% [==  ]"
+    Detailed,  ///< Detailed dual-core badge: "FPS 30.0 | C0: 18% C1: 30% | HEAP 280K"
+    Minimal,   ///< Minimalist badge: "30.0 FPS · 24%"
     COUNT
 };
 
@@ -72,6 +72,16 @@ public:
     float getBreathPhase() const { return breathPhase; }
     void nextEmotion();
 
+    // Autonomous behavior control (manual web control can hold a pose/gaze)
+    void setAutonomousEnabled(bool enabled) {
+        autonomousEnabled = enabled;
+        if (enabled) {
+            saccadeTimer = 0.0f;
+            autoEmotionTimer = 0.0f;
+        }
+    }
+    bool isAutonomousEnabled() const { return autonomousEnabled; }
+
     // Performance telemetry overlay controls (Core 1 & Core 2 separate telemetry)
     void setPerfStats(float fps, float cpuCore1, float cpuCore2, float cpuTotal = -1.0f, uint32_t freeHeap = 0);
     float getFps() const { return perfFps; }
@@ -82,7 +92,12 @@ public:
     PerfOverlayMode getPerfOverlayMode() const { return perfMode; }
     void cyclePerfOverlayMode();
     void setPerfOverlayPosition(PerfOverlayPosition pos) { perfPos = pos; }
+    PerfOverlayPosition getPerfOverlayPosition() const { return perfPos; }
     bool isTouchOnOverlay(int32_t x, int32_t y) const;
+
+    // Wi-Fi link indicator (grouped with the top-left HUD info)
+    void setWifiStats(bool enabled, bool connected, int8_t rssi);
+    bool isWifiEnabled() const { return wifiEnabled; }
 
     // User interaction
     void handleTouch(int32_t x, int32_t y);
@@ -151,6 +166,7 @@ private:
     float touchReleaseTimer;
     bool isUserTouching;
     bool isBeingPetted;
+    bool autonomousEnabled;
 
     // Micro-motion & Ambient Waves
     float globalTime;
@@ -196,6 +212,12 @@ private:
     int32_t overlayW;
     int32_t overlayH;
     void drawPerfOverlay();
+
+    // Wi-Fi link indicator
+    bool wifiEnabled;
+    bool wifiConnected;
+    int8_t wifiRssi;
+    void drawWifiIndicator(int32_t x, int32_t y);
 
     // Color helpers
     static RobotTheme getEmotionTheme(RobotEmotion emotion);

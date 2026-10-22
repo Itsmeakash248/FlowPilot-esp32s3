@@ -30,9 +30,9 @@ static void motor_test_task(void *pvParameters) {
 
     ESP_LOGI(TAG, "======================================================================");
     ESP_LOGI(TAG, "🚀 FlowPilot Motor Test Task Started on Core %d", xPortGetCoreID());
-    ESP_LOGI(TAG, "   Motor A (Right): IN1=GPIO %d, IN2=GPIO %d (Invert: %s)",
+    ESP_LOGI(TAG, "   Motor A (Left):  IN1=GPIO %d, IN2=GPIO %d (Invert: %s)",
              (int)mCfg.in1Pin, (int)mCfg.in2Pin, mCfg.invertLeft ? "YES" : "NO");
-    ESP_LOGI(TAG, "   Motor B (Left):  IN3=GPIO %d, IN4=GPIO %d (Invert: %s)",
+    ESP_LOGI(TAG, "   Motor B (Right): IN3=GPIO %d, IN4=GPIO %d (Invert: %s)",
              (int)mCfg.in3Pin, (int)mCfg.in4Pin, mCfg.invertRight ? "YES" : "NO");
     ESP_LOGI(TAG, "   Mode: %s | PWM: %lu Hz | Slew Rate: %.1f/s",
              (mCfg.mode == MotorControlMode::PwmDirectPins) ? "4-Wire Direct PWM" : "6-Wire ENA/ENB",
@@ -67,52 +67,52 @@ static void motor_test_task(void *pvParameters) {
         ESP_LOGI(TAG, "----------------------------------------------------------------------");
 
         // ==================================================================
-        // Phase 1: Right Motor (Motor A) Isolated Test
+        // Phase 1: Left Motor (Motor A) Isolated Test
         // ==================================================================
         s_currentPhase = MotorTestPhase::MotorA_Forward;
-        ESP_LOGI(TAG, "[1/8] Motor A (Right) FORWARD @ +%.0f%% (GPIO %d PWM, GPIO %d LOW)...",
+        ESP_LOGI(TAG, "[1/8] Motor A (Left) FORWARD @ +%.0f%% (GPIO %d PWM, GPIO %d LOW)...",
                  spd * 100.0f, (int)aFwdPwm, (int)aFwdLow);
         motor.setMotorSpeeds(spd, 0.0f);
         if (!sleepInterruptible(stepMs)) break;
 
         s_currentPhase = MotorTestPhase::MotorA_Coast;
-        ESP_LOGI(TAG, "      Motor A (Right) COAST STOP (Both pins LOW)...");
+        ESP_LOGI(TAG, "      Motor A (Left) COAST STOP (Both pins LOW)...");
         motor.coastMotorA();
         if (!sleepInterruptible(pauseMs)) break;
 
         s_currentPhase = MotorTestPhase::MotorA_Reverse;
-        ESP_LOGI(TAG, "[2/8] Motor A (Right) REVERSE @ -%.0f%% (GPIO %d LOW, GPIO %d PWM)...",
+        ESP_LOGI(TAG, "[2/8] Motor A (Left) REVERSE @ -%.0f%% (GPIO %d LOW, GPIO %d PWM)...",
                  spd * 100.0f, (int)aFwdPwm, (int)aFwdLow);
         motor.setMotorSpeeds(-spd, 0.0f);
         if (!sleepInterruptible(stepMs)) break;
 
         s_currentPhase = MotorTestPhase::MotorA_Brake;
-        ESP_LOGI(TAG, "      Motor A (Right) ACTIVE BRAKE (Both pins HIGH)...");
+        ESP_LOGI(TAG, "      Motor A (Left) ACTIVE BRAKE (Both pins HIGH)...");
         motor.brakeMotorA();
         if (!sleepInterruptible(pauseMs)) break;
 
         // ==================================================================
-        // Phase 2: Left Motor (Motor B) Isolated Test
+        // Phase 2: Right Motor (Motor B) Isolated Test
         // ==================================================================
         s_currentPhase = MotorTestPhase::MotorB_Forward;
-        ESP_LOGI(TAG, "[3/8] Motor B (Left) FORWARD @ +%.0f%% (GPIO %d PWM, GPIO %d LOW)...",
+        ESP_LOGI(TAG, "[3/8] Motor B (Right) FORWARD @ +%.0f%% (GPIO %d PWM, GPIO %d LOW)...",
                  spd * 100.0f, (int)bFwdPwm, (int)bFwdLow);
         motor.setMotorSpeeds(0.0f, spd);
         if (!sleepInterruptible(stepMs)) break;
 
         s_currentPhase = MotorTestPhase::MotorB_Coast;
-        ESP_LOGI(TAG, "      Motor B (Left) COAST STOP (Both pins LOW)...");
+        ESP_LOGI(TAG, "      Motor B (Right) COAST STOP (Both pins LOW)...");
         motor.coastMotorB();
         if (!sleepInterruptible(pauseMs)) break;
 
         s_currentPhase = MotorTestPhase::MotorB_Reverse;
-        ESP_LOGI(TAG, "[4/8] Motor B (Left) REVERSE @ -%.0f%% (GPIO %d LOW, GPIO %d PWM)...",
+        ESP_LOGI(TAG, "[4/8] Motor B (Right) REVERSE @ -%.0f%% (GPIO %d LOW, GPIO %d PWM)...",
                  spd * 100.0f, (int)bFwdPwm, (int)bFwdLow);
         motor.setMotorSpeeds(0.0f, -spd);
         if (!sleepInterruptible(stepMs)) break;
 
         s_currentPhase = MotorTestPhase::MotorB_Brake;
-        ESP_LOGI(TAG, "      Motor B (Left) ACTIVE BRAKE (Both pins HIGH)...");
+        ESP_LOGI(TAG, "      Motor B (Right) ACTIVE BRAKE (Both pins HIGH)...");
         motor.brakeMotorB();
         if (!sleepInterruptible(pauseMs)) break;
 
@@ -225,7 +225,7 @@ esp_err_t startMotorTestTask(const MotorTestConfig& config) {
 
     s_activeConfig = config;
 
-    // Pin test task to Core 0 with priority 3 (leaving Core 1 for 60 FPS face rendering)
+    // Pin test task to Core 0 with priority 3 (leaving Core 1 for 30 FPS face rendering)
     BaseType_t ret = xTaskCreatePinnedToCore(
         motor_test_task,
         "motor_test",

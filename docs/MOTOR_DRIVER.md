@@ -1,46 +1,74 @@
-# L829 / L298N Motor Driver Hardware & Integration Guide
+# L298N / L829 Motor Driver Hardware & Integration Guide
 
-This guide details the hardware specifications, wiring connections, power considerations, and software API for controlling dual DC motors using the **L829 / L298N Dual H-Bridge Motor Driver** on the **FlowPilot-esp32s3** robotics platform.
-
----
-
-## 1. Hardware Overview
-
-The **L298N** (commonly referenced or mistyped as **L829**) is a high-power dual full-bridge driver designed to drive inductive loads such as relays, solenoids, DC motors, and bipolar stepper motors.
-
-### Key Specifications
-- **Driver Chip**: L298N Dual H-Bridge IC
-- **Motor Supply Voltage ($V_S$)**: +5V to +35V (typically 6V–12V for DC gearmotors)
-- **Peak Current ($I_O$)**: Up to 2.0A per channel
-- **Logic Voltage ($V_{SS}$)**: +5V (provided by internal 5V regulator if $V_S \le 12V$)
-- **Control Signal Voltage**: 3.3V / 5V TTL compatible (direct ESP32-S3 3.3V logic compatible)
-- **Control Modes**:
-  - **3-Wire Mode (Recommended)**: Direction pins (IN1/IN2 and IN3/IN4) + Speed Enable PWM pins (ENA and ENB).
-  - **2-Wire Mode**: ENA/ENB jumpers installed to 5V; PWM applied directly to direction pins.
+This guide covers the hardware, wiring, power, control modes and software API for the **L298N / L829 dual H-bridge** used by the **FlowPilot ESP32-S3** robot.
 
 ---
 
-## 2. Wiring & Pinout Diagram
+## 1. Hardware overview
 
-The default pin configuration on the ESP32-S3 uses **4-wire direct PWM control**, which **completely excludes the ENA and ENB pins** by keeping the factory 5V jumper caps in place on the L298N board. This saves 2 valuable GPIO pins on the ESP32-S3!
+The **L298N** (often labelled or mistyped as **L829**) is a dual full-bridge driver for inductive loads such as DC motors, relays and stepper motors.
 
-### 4-Wire Pinout Mapping (Default - ENA/ENB Excluded)
+### Key specifications
 
-| L298N / L829 Pin | ESP32-S3 GPIO | Function | Description |
+| Parameter | Value |
+| :--- | :--- |
+| Driver chip | L298N dual H-bridge |
+| Motor supply (`V_S`) | 5–35 V (typically 6–12 V for DC gearmotors) |
+| Peak current | Up to 2 A per channel |
+| Logic supply (`V_SS`) | 5 V (internal regulator when `V_S ≤ 12 V`) |
+| Control logic | 3.3 V / 5 V TTL compatible; ESP32-S3 3.3 V logic works directly |
+| PWM | 20 kHz ultrasonic, 10-bit LEDC resolution |
+| Default control mode | 4-wire direct PWM (per-motor 2-wire) |
+
+---
+
+## 2. Control modes
+
+The driver supports two wiring/software modes. The enum names in `MotorDriver.hpp` are `PwmDirectPins` and `PwmEnablePins`.
+
+### 2.1 4-wire direct PWM (default)
+
+- Keep the factory **ENA/ENB 5 V jumper caps installed**.
+- Apply PWM directly to **IN1–IN4**; each motor uses two PWM lines for direction and speed.
+- Uses **4 GPIOs** total for two motors.
+- `MotorControlMode::PwmDirectPins` is the default.
+- This is the configuration used by the stock FlowPilot firmware.
+
+### 2.2 6-wire enable mode (optional)
+
+- **Remove the ENA/ENB jumpers.**
+- Drive **ENA/ENB with PWM** and use **IN1–IN4 as direction outputs**.
+- Uses **6 GPIOs** total for two motors.
+- Set `cfg.mode = MotorControlMode::PwmEnablePins` explicitly and assign `enaPin`/`enbPin`.
+- Setting `enaPin`/`enbPin` alone does **not** switch modes, because the default `mode` remains `PwmDirectPins`.
+
+> The code comments call this “3-wire control per motor” because each motor uses ENA/ENB plus two direction pins. For the whole board that is **6 signal wires**, so this guide calls it 6-wire mode to avoid confusion with the 4-wire direct mode.
+
+---
+
+## 3. Default pinout
+
+The stock build uses the following pins:
+
+| L298N / L829 pin | ESP32-S3 GPIO | Function | Notes |
 | :--- | :--- | :--- | :--- |
-| **ENA** | *None* | Keep 5V Jumper ON | Tied to +5V logic rail via onboard jumper cap |
-| **IN1** | **GPIO 15** | Motor A Direct PWM 1 | LEDC Low-Speed Channel 1 (Ultrasonic 20 kHz) |
-| **IN2** | **GPIO 16** | Motor A Direct PWM 2 | LEDC Low-Speed Channel 2 (Ultrasonic 20 kHz) |
-| **IN3** | **GPIO 18** | Motor B Direct PWM 1 | LEDC Low-Speed Channel 3 (Ultrasonic 20 kHz) |
-| **IN4** | **GPIO 17** | Motor B Direct PWM 2 | LEDC Low-Speed Channel 4 (Ultrasonic 20 kHz) |
-| **ENB** | *None* | Keep 5V Jumper ON | Tied to +5V logic rail via onboard jumper cap |
-| **GND** | **GND** | Common Ground | **Must be tied to ESP32 Ground** |
-| **+12V / $V_S$** | External Battery (+) | Motor Power | 7.4V (2S LiPo) or 11.1V (3S LiPo) |
-| **+5V** | 5V Regulator Output | Logic Power | Leave unconnected if ESP32 is powered via USB |
+| **ENA** | *None* | 5 V jumper ON | Excluded in 4-wire mode |
+| **IN1** | **GPIO 15** | Motor A PWM 1 | Left motor, LEDC channel 1 |
+| **IN2** | **GPIO 16** | Motor A PWM 2 | Left motor, LEDC channel 2 |
+| **IN3** | **GPIO 18** | Motor B PWM 1 | Right motor, LEDC channel 3 |
+| **IN4** | **GPIO 17** | Motor B PWM 2 | Right motor, LEDC channel 4 |
+| **ENB** | *None* | 5 V jumper ON | Excluded in 4-wire mode |
+| **GND** | **GND** | Common ground | Must be tied to ESP32-S3 ground |
+| **+12 V / `V_S`** | External battery (+) | Motor power | 7.4 V (2S LiPo) or 11.1 V (3S LiPo) |
+| **+5 V** | 5 V regulator output | Logic power | Leave unconnected when the ESP32 is USB-powered |
 
-```
+> **Motor A / Motor B:** `applyHardwareOutputs()` passes the left speed to IN1/IN2 and the right speed to IN3/IN4. The default `invertRight = true` accounts for a mirrored right motor. If your chassis is wired differently, call `setInverted(left, right)` or swap the motor leads.
+
+### Wiring diagram
+
+```text
                 +----------------------------+
-                |    L298N / L829 Module     |
+                |    L298N / L829 module     |
                 |                            |
   [Motor A +]---| OUT1                  OUT3 |--[Motor B +]
   [Motor A -]---| OUT2                  OUT4 |--[Motor B -]
@@ -49,49 +77,47 @@ The default pin configuration on the ESP32-S3 uses **4-wire direct PWM control**
                 +---+----+----+----+----+---+
                     |    |    |    |    |   |
      [Jumper ON] <--+    |    |    |    |   +--> [Jumper ON]
-     (Tied to 5V)        |    |    |    |        (Tied to 5V)
-                         |    |    |    +------> ESP32-S3 GPIO 17 (Right PWM 2)
-                         |    |    +-----------> ESP32-S3 GPIO 18 (Right PWM 1)
-                         |    +----------------> ESP32-S3 GPIO 16 (Left PWM 2)
-                         +---------------------> ESP32-S3 GPIO 15 (Left PWM 1)
+     (tied to 5 V)       |    |    |    |        (tied to 5 V)
+                         |    |    |    +------> ESP32-S3 GPIO 17 (Motor B PWM 2)
+                         |    |    +-----------> ESP32-S3 GPIO 18 (Motor B PWM 1)
+                         |    +----------------> ESP32-S3 GPIO 16 (Motor A PWM 2)
+                         +---------------------> ESP32-S3 GPIO 15 (Motor A PWM 1)
 
-           Power Terminals:
-           [ +12V ] ---> Battery Positive (+) [7.4V - 12V]
-           [  GND ] ---> Common Ground with ESP32-S3 & Battery (-)
-           [  +5V ] ---> (Optional 5V logic out if onboard regulator jumper is fitted)
+           Power terminals:
+           [ +12V ] ---> Battery positive (+) [7.4 V - 12 V]
+           [  GND ] ---> Common ground with ESP32-S3 and battery (-)
+           [  +5V ] ---> Optional 5 V logic output if the regulator jumper is fitted
 ```
 
-*(Note: If you prefer 6-wire control with external enable pins, you can set `enaPin` and `enbPin` to your desired pins in `MotorDriverConfig` and remove the jumper caps).*
+For 6-wire mode, remove the ENA/ENB jumper caps and connect ENA/ENB to two free GPIOs. Do not use GPIO 5/6/7/9–18, which are already assigned to touch, backlight, display and motors in the stock build.
 
 ---
 
-## 3. Power Supply & Grounding Guidelines
+## 4. Power supply and grounding
 
 > [!CAUTION]
-> **Never power DC motors directly from the ESP32 development board's 3.3V or 5V rails.** DC motors draw significant startup current and induce inductive voltage spikes that can permanently damage the ESP32-S3 SoC or trigger brownout resets.
+> Never power DC motors from the ESP32 development board's 3.3 V or 5 V rails. Motor startup current and inductive spikes can damage the ESP32-S3 or trigger brownout resets.
 
-1. **Common Ground**: Ensure a solid, low-resistance ground wire connects the battery negative terminal, the L298N module GND, and the ESP32-S3 GND.
-2. **Onboard 5V Regulator Jumper**:
-   - If motor supply is **$\le 12V$**: Keep the 5V regulator jumper **ON**. The module generates its own internal 5V logic voltage.
-   - If motor supply is **$> 12V$**: Remove the jumper and supply external +5V to the +5V terminal to prevent overheating the onboard linear regulator.
-3. **Decoupling Capacitors**: Place a 100µF–470µF electrolytic capacitor across the motor power terminals ($V_S$ and GND) to buffer surge currents during rapid motor acceleration.
+1. **Common ground**: connect the battery negative, L298N GND and ESP32-S3 GND with a solid, low-resistance wire.
+2. **Onboard 5 V regulator jumper**:
+   - Motor supply **≤ 12 V**: keep the 5 V regulator jumper **ON**; the module generates its own logic supply.
+   - Motor supply **> 12 V**: remove the jumper and supply external +5 V to the +5 V terminal to avoid overheating the linear regulator.
+3. **Bulk capacitance**: place a **100–470 µF** electrolytic capacitor across `V_S` and GND to buffer motor startup surges.
+4. **Battery current**: choose a pack that can supply the motor stall current. Slew-rate ramping reduces, but does not eliminate, startup current.
 
 ---
 
-## 4. Software Architecture & API Reference
+## 5. Software architecture and API
 
-The driver is exposed via the `MotorDriver` class (also aliased as `L829Driver` and `L298NDriver`).
+The driver is exposed as `MotorDriver` and aliased as `L298NDriver`, `L829Driver` and `L829MotorDriver`.
 
-### 1. Header Inclusion
+### 5.1 Include and initialize
+
 ```cpp
 #include "MotorDriver.hpp"
-// Or: #include "L829Driver.hpp"
 // Or: #include "L298NDriver.hpp"
-```
+// Or: #include "L829Driver.hpp"
 
-### 2. Initialization
-```cpp
-// Using global default instance with preconfigured ESP32-S3 safe pins:
 MotorDriver& motor = getMotorDriver();
 esp_err_t err = motor.init();
 if (err != ESP_OK) {
@@ -99,90 +125,170 @@ if (err != ESP_OK) {
 }
 ```
 
-### 3. Custom Pin Configuration
-If your hardware uses different pins:
+### 5.2 Custom pin configuration
+
+Default 4-wire mode:
+
 ```cpp
 MotorDriverConfig cfg;
-cfg.in1Pin = GPIO_NUM_1;
-cfg.in2Pin = GPIO_NUM_2;
-cfg.enaPin = GPIO_NUM_3;
-cfg.in3Pin = GPIO_NUM_4;
-cfg.in4Pin = GPIO_NUM_5;
-cfg.enbPin = GPIO_NUM_6;
-cfg.invertLeft = false;    // Set true if left motor is mounted reversed
-cfg.invertRight = true;    // Set true if right motor is mounted reversed
-cfg.slewRate = 2.5f;       // Acceleration ramp (units/sec)
+cfg.mode = MotorControlMode::PwmDirectPins;  // ENA/ENB jumpers fitted
+cfg.in1Pin = GPIO_NUM_15;    // Motor A / left
+cfg.in2Pin = GPIO_NUM_16;
+cfg.in3Pin = GPIO_NUM_18;    // Motor B / right
+cfg.in4Pin = GPIO_NUM_17;
+cfg.enaPin = GPIO_NUM_NC;    // Not used
+cfg.enbPin = GPIO_NUM_NC;
+cfg.invertLeft = false;
+cfg.invertRight = true;      // Mirrored right motor
+cfg.slewRate = 2.5f;         // Acceleration ramp, units/second
 
 MotorDriver customDriver(cfg);
 customDriver.init();
 ```
 
-### 4. Differential Drive Kinematics
-```cpp
-// Arcade Drive: drive(throttle, steering)
-// throttle: [-1.0 .. 1.0] (-1 = reverse, +1 = forward)
-// steering: [-1.0 .. 1.0] (-1 = full left spin, +1 = full right spin)
+6-wire enable mode:
 
-motor.drive(1.0f, 0.0f);   // Full speed forward
-motor.drive(0.5f, -0.3f);  // Half speed forward, gentle left curve
-motor.drive(-0.6f, 0.0f);  // 60% speed reverse
+```cpp
+MotorDriverConfig cfg;
+cfg.mode = MotorControlMode::PwmEnablePins;  // ENA/ENB jumpers removed
+cfg.in1Pin = GPIO_NUM_15;
+cfg.in2Pin = GPIO_NUM_16;
+cfg.in3Pin = GPIO_NUM_18;
+cfg.in4Pin = GPIO_NUM_17;
+cfg.enaPin = GPIO_NUM_4;     // Choose free pins
+cfg.enbPin = GPIO_NUM_8;
+
+MotorDriver customDriver(cfg);
+customDriver.init();
 ```
 
-### 5. Movement Primitives
+### 5.3 Differential drive
+
 ```cpp
-motor.forward(0.8f);       // Forward at 80% speed
-motor.backward(0.5f);      // Reverse at 50% speed
-motor.turnLeft(0.7f);      // Arc turn left
-motor.turnRight(0.7f);     // Arc turn right
-motor.spinLeft(0.6f);      // Spin in-place counter-clockwise
-motor.spinRight(0.6f);     // Spin in-place clockwise
-motor.stop(true);          // Active electric brake (short brake)
-motor.stop(false);         // Free-wheeling coast stop
+// drive(throttle, steering)
+// throttle: [-1.0 .. 1.0]  (-1 = reverse, +1 = forward)
+// steering: [-1.0 .. 1.0]  (-1 = full left, +1 = full right)
+
+motor.drive(1.0f, 0.0f);    // Full speed forward
+motor.drive(0.5f, -0.3f);   // Half speed, gentle left curve
+motor.drive(-0.6f, 0.0f);   // 60% reverse
 ```
 
-### 6. Slew-Rate Ramping & Soft Start
-To avoid brownouts when motors start abruptly under load, `MotorDriver` includes continuous slew-rate limiting:
-- Call `motor.update(dt)` in your 60 FPS animation/control task (already integrated in `robot_face_task`).
-- Adjust responsiveness:
-  ```cpp
-  motor.setSlewRate(4.0f); // Fast acceleration (0 to 100% in 250ms)
-  motor.setSlewRate(1.5f); // Gentle, high-inertia acceleration (0 to 100% in 667ms)
-  ```
+### 5.4 Movement primitives
 
-### 7. Dual Motor Diagnostic Test Suite
-To verify wiring polarity, channel separation, and H-bridge operation, FlowPilot provides an automated hardware test suite running on Core 0:
+```cpp
+motor.forward(0.8f);       // Forward at 80%
+motor.backward(0.5f);      // Reverse at 50%
+motor.turnLeft(0.7f);      // Forward arc turn left
+motor.turnRight(0.7f);     // Forward arc turn right
+motor.spinLeft(0.6f);      // Spin in place counter-clockwise
+motor.spinRight(0.6f);     // Spin in place clockwise
+motor.stop(true);          // Active electric brake
+motor.stop(false);         // Free-wheeling coast
+```
+
+### 5.5 Slew-rate ramping
+
+The driver smooths speed changes to reduce brownout risk:
+
+```cpp
+motor.update(dt);            // Call from the 100 Hz control loop
+motor.setSlewRate(4.0f);     // Fast: 0 → 100% in 250 ms
+motor.setSlewRate(1.5f);     // Gentle: 0 → 100% in 667 ms
+motor.setSlewRate(0.0f);     // Disable ramping
+```
+
+`MotorDriver::update()` is already called from `robot_control_task()` in `main/main.cpp` at 100 Hz. The render task runs separately at ~30 FPS.
+
+### 5.6 Telemetry
+
+```cpp
+const MotorTelemetry& t = motor.getTelemetry();
+
+t.currentLeft;   // Smoothed left output [-1.0 .. 1.0]
+t.currentRight;  // Smoothed right output [-1.0 .. 1.0]
+t.isMoving;      // True while either motor is driving
+t.isBraking;     // True while either motor is actively braked
+```
+
+---
+
+## 6. Motor test suites
+
+### 6.1 `MotorTest` task (8 phases, Core 0)
+
+Enable the test in `main/main.cpp`:
+
+```cpp
+#define ENABLE_MOTOR_TEST 1
+```
+
+The task is created after motor initialization. It runs on Core 0 at priority 3.
 
 ```cpp
 #include "MotorTest.hpp"
 
-// Start the automated test sequence (runs on Core 0 with priority 3)
+// Start with defaults: continuous loop, 40% speed, 3 s countdown
 startMotorTestTask();
 
-// Or run with custom parameters:
+// Custom configuration
 MotorTestConfig testCfg;
-testCfg.continuousLoop = false;     // Run single cycle and stop
-testCfg.testSpeed = 0.40f;          // 40% speed
-testCfg.stepDurationMs = 1500;      // 1.5s per step
+testCfg.continuousLoop = false;     // Single cycle
+testCfg.testSpeed = 0.40f;
+testCfg.stepDurationMs = 1500;
+testCfg.pauseDurationMs = 800;
+testCfg.countdownSec = 3;
+testCfg.cycleRestDurationMs = 4000;
 startMotorTestTask(testCfg);
 
-// To stop the test and brake immediately:
+// Stop and brake immediately
 stopMotorTestTask();
 ```
 
-The test systematically exercises:
-1. **Motor A (Left) Isolated**: Forward (GPIO 15 PWM) -> Coast Stop -> Reverse (GPIO 16 PWM) -> Active Dynamic Brake.
-2. **Motor B (Right) Isolated**: Forward (GPIO 18 PWM) -> Coast Stop -> Reverse (GPIO 17 PWM) -> Active Dynamic Brake.
-3. **Dual Motors Synchronized**: Straight forward drive -> Electric brake -> Straight reverse -> Electric brake.
-4. **Skid-Steer / Pivot**: In-place counter-clockwise spin (spinLeft) -> in-place clockwise spin (spinRight).
-5. **Soft-Start Slew Ramp**: 0% -> 60% -> 0% acceleration ramp testing brownout prevention and current limiter.
+The task exercises:
+
+1. Motor A (left) forward → coast → reverse → active brake.
+2. Motor B (right) forward → coast → reverse → active brake.
+3. Dual-motor straight forward → active brake.
+4. Dual-motor straight reverse → active brake.
+5. In-place spin left → spin right.
+6. Slew-rate ramp 0 → 60% → 0%.
+
+> Keep the robot raised or on a stand during the test. The task logs each phase and the telemetry snapshot.
+
+### 6.2 `runDiagnosticTest()` (blocking 6-step sequence)
+
+`MotorDriver::runDiagnosticTest(stepDurationMs, speed)` is a simpler blocking sequence for bench checks. It drives Motor A, then Motor B, then both motors, and finishes with a brake. It must be called after `init()`.
 
 ---
 
-## 5. Troubleshooting & Diagnostics
+## 7. Troubleshooting
 
-| Symptom | Probable Cause | Recommended Solution |
+| Symptom | Probable cause | Recommended solution |
 | :--- | :--- | :--- |
-| **Motors do not spin at all** | ENA/ENB jumpers installed or removed without matching software mode | In default mode, remove ENA/ENB jumpers so ESP32 can feed PWM to them. If jumpers remain installed, switch config to `MotorControlMode::PwmDirectPins`. |
-| **ESP32 reboots when motors start** | Motor inrush current causes power-rail dip (brownout) | 1. Ensure separate battery power for motors.<br>2. Add 220µF–470µF bulk capacitor across L298N $V_S$ and GND.<br>3. Lower slew rate via `motor.setSlewRate(2.0f)`. |
-| **Robot steers in the wrong direction** | Motor wires inverted or mirrored orientation | Call `motor.setInverted(true, false)` or swap OUT1/OUT2 polarity. |
-| **High-pitched audible motor whine** | PWM switching frequency too low | The driver defaults to **20,000 Hz (ultrasonic)**. Verify timer clock configuration has not been modified. |
+| **Motors do not spin at all** | ENA/ENB jumpers removed but the firmware still uses 4-wire mode | Re-fit the ENA/ENB 5 V jumpers, or switch to `MotorControlMode::PwmEnablePins` and assign `enaPin`/`enbPin`. |
+| **Motors spin but speed does not change** | PWM is not reaching the IN pins, or the board is in the wrong mode | Confirm the jumpers match the selected mode and that the IN pins are the LEDC channels. |
+| **ESP32 reboots when motors start** | Motor inrush current pulls the battery rail down | Use a separate motor battery, add a 220–470 µF capacitor across `V_S`/GND, and lower the slew rate (`motor.setSlewRate(2.0f)`). |
+| **Robot steers in the wrong direction** | Motor leads or mounting orientation are mirrored | Call `motor.setInverted(true, false)` (or the opposite pair) or swap the motor leads. |
+| **One motor runs backwards** | That motor is mounted or wired in reverse | Set the matching invert flag with `setInverted()` or swap OUT1/OUT2 (or OUT3/OUT4). |
+| **High-pitched motor whine** | PWM frequency is below the audible range | The driver defaults to **20 kHz**; verify `pwmFreqHz` and the LEDC timer configuration were not changed. |
+| **Motor test starts immediately** | `ENABLE_MOTOR_TEST` is set to `1` | Set it to `0` for normal operation, or call `stopMotorTestTask()`. |
+
+---
+
+## 8. Default configuration summary
+
+| Setting | Default |
+| :--- | :--- |
+| Control mode | `PwmDirectPins` (4-wire direct PWM) |
+| Motor A pins | IN1 = GPIO 15, IN2 = GPIO 16 |
+| Motor B pins | IN3 = GPIO 18, IN4 = GPIO 17 |
+| ENA / ENB | `GPIO_NUM_NC` (5 V jumpers fitted) |
+| PWM frequency | 20 kHz |
+| PWM resolution | 10-bit (0–1023) |
+| Minimum speed | 0.15 (deadzone compensation) |
+| Maximum speed | 1.0 |
+| Slew rate | 3.0 units/s |
+| Ramping | Enabled |
+| Left inversion | `false` |
+| Right inversion | `true` |

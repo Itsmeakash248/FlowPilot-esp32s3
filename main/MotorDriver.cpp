@@ -374,33 +374,33 @@ void MotorDriver::coastMotorB() {
 void MotorDriver::runDiagnosticTest(uint32_t stepDurationMs, float speed) {
     ESP_LOGI(TAG, "======================================================================");
     ESP_LOGI(TAG, "🚀 FlowPilot Motor Diagnostic Self-Test (Speed: %.0f%%)", speed * 100.0f);
-    ESP_LOGI(TAG, "   Motor A (Right): IN1=GPIO %d, IN2=GPIO %d", config.in1Pin, config.in2Pin);
-    ESP_LOGI(TAG, "   Motor B (Left):  IN3=GPIO %d, IN4=GPIO %d", config.in3Pin, config.in4Pin);
+    ESP_LOGI(TAG, "   Motor A (Left):  IN1=GPIO %d, IN2=GPIO %d", config.in1Pin, config.in2Pin);
+    ESP_LOGI(TAG, "   Motor B (Right): IN3=GPIO %d, IN4=GPIO %d", config.in3Pin, config.in4Pin);
     ESP_LOGI(TAG, "======================================================================");
 
     speed = std::max(0.15f, std::min(speed, 1.0f));
 
-    // Test Right Motor (Motor A)
-    ESP_LOGI(TAG, "[1/6] Motor A (Right) FORWARD @ +%.0f%%...", speed * 100.0f);
+    // Test Left Motor (Motor A)
+    ESP_LOGI(TAG, "[1/6] Motor A (Left) FORWARD @ +%.0f%%...", speed * 100.0f);
     setMotorSpeeds(speed, 0.0f);
     vTaskDelay(pdMS_TO_TICKS(stepDurationMs));
     coastMotorA();
     vTaskDelay(pdMS_TO_TICKS(500));
 
-    ESP_LOGI(TAG, "[2/6] Motor A (Right) REVERSE @ -%.0f%%...", speed * 100.0f);
+    ESP_LOGI(TAG, "[2/6] Motor A (Left) REVERSE @ -%.0f%%...", speed * 100.0f);
     setMotorSpeeds(-speed, 0.0f);
     vTaskDelay(pdMS_TO_TICKS(stepDurationMs));
     brakeMotorA();
     vTaskDelay(pdMS_TO_TICKS(500));
 
-    // Test Left Motor (Motor B)
-    ESP_LOGI(TAG, "[3/6] Motor B (Left) FORWARD @ +%.0f%%...", speed * 100.0f);
+    // Test Right Motor (Motor B)
+    ESP_LOGI(TAG, "[3/6] Motor B (Right) FORWARD @ +%.0f%%...", speed * 100.0f);
     setMotorSpeeds(0.0f, speed);
     vTaskDelay(pdMS_TO_TICKS(stepDurationMs));
     coastMotorB();
     vTaskDelay(pdMS_TO_TICKS(500));
 
-    ESP_LOGI(TAG, "[4/6] Motor B (Left) REVERSE @ -%.0f%%...", speed * 100.0f);
+    ESP_LOGI(TAG, "[4/6] Motor B (Right) REVERSE @ -%.0f%%...", speed * 100.0f);
     setMotorSpeeds(0.0f, -speed);
     vTaskDelay(pdMS_TO_TICKS(stepDurationMs));
     brakeMotorB();
